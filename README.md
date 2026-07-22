@@ -1,37 +1,92 @@
-# TREE
+# Maya L-System 参数化树生成器
 
-Procedural tree generation for Maya with parameterized modeling, seasons,
-weather animation, and a unified user interface.
+这是一个独立的本地 Maya 工具，不属于 `TREE` GitHub 仓库。
 
-## Project modules
+## 功能
 
-- `src/core.py` — trunk and branch generation (Member A)
-- `src/foliage.py` — leaves, flowers, and seasonal logic (Member B)
-- `src/weather.py` — wind, rain, snow, falling leaves, and petals (Member C)
-- `ui/main_ui.py` — Maya UI, module integration, and presentation support (Member D)
-- `assets/` — reference images, materials, textures, and Maya assets
-- `docs/` — presentations, ethics review, methodology diagrams, and references
+- 参数化控制主干粗细。
+- 参数化控制分支层级数量（包含主干层）。
+- 参数化控制每个生长节点的侧向分叉数量。
+- 参数化控制基础分支角度。
+- 固定随机种子，可复现同一棵树。
+- 四种形态预设：圆冠阔叶、塔形针叶、垂柳形、窄冠杨树。
+- 每种形态使用独立冠层包络：针叶保持下宽上窄，垂柳沿低垂枝挂叶，杨树形成填实的狭长柱冠。
+- 四季变量：春、夏、秋、冬。
+- 季节自动控制叶片密度、尺寸与颜色材质。
+- 季节自动控制花朵数量、开放程度、颜色和凋谢下垂形态。
+- 叶片密度、叶片尺寸、花朵密度和花朵尺寸可在季节基础上继续微调。
+- 叶片按多叶簇分布，并依据树种覆盖不同数量的末端与中层细枝，默认形成连续且保留树种轮廓的高密度树冠。
+- 全树先统一计算叶片和花朵额度，再公平分配到各合格枝条与枝梢；达到网格上限时也不会只集中在先生成的一侧。
+- 生成单一多边形网格，减少 Maya 场景节点数量。
+- L-System 直接输出带稳定 ID 和局部坐标框架的叶片/花朵附着点。
+- 内置 Kenney Nature Kit（CC0）器官资产目录：5 组叶片、9 组花朵 OBJ；季节系统按状态和权重稳定选择模型。
+- 风恢复使用 Maya bend deformer 与表达式；雨雪恢复使用经典粒子、发射器、重力/空气场和枝干碰撞。
+- 落叶与落花恢复使用树上网格表面发射和 Maya particle instancer，从树冠表面开始脱落。
+- 积雪恢复使用雪层副本的缩放与透明度关键帧，强度和累积时段均可参数化。
 
-## Maya development setup
+预设只表达相似树种的整体轮廓，不是严格的植物学物种模拟。
 
-Clone the repository, then add its folders to Maya's Python path:
+## 在 Maya 中打开工具
+
+在 Maya Script Editor 的 Python 页签执行：
 
 ```python
-import sys
-import importlib
-
-PROJECT_ROOT = "D:/MyProject/TREE"
-for folder in (f"{PROJECT_ROOT}/src", f"{PROJECT_ROOT}/ui"):
-    if folder not in sys.path:
-        sys.path.append(folder)
-
-import main_ui
-importlib.reload(main_ui)
-main_ui.show_window()
+SCRIPT_PATH = r"D:/未来创新设计/maya_lsystem_tree_generator/launcher.py"
+exec(compile(open(SCRIPT_PATH, encoding="utf-8").read(), SCRIPT_PATH, "exec"))
 ```
 
-## Team workflow
+工具窗口中选择预设，调整参数后点击“生成树模型”。
 
-Keep `main` stable. Develop in feature branches such as
-`feature/core-generation`, `feature/foliage-season`, `feature/weather-anim`,
-and `feature/ui-integration`, then open a pull request for review.
+## 参数说明
+
+| 参数 | 说明 |
+| --- | --- |
+| 主干半径 | 根部枝段的初始半径 |
+| 分支层级 | 递归层级总数，主干计为第 1 层 |
+| 每个节点分叉数 | 每次递归生长产生的侧枝数，范围 `1–6`，主轴延续不计入 |
+| 分支角度 | L-System turtle 的基础偏航/俯仰角 |
+| 随机种子 | 控制产生式选择、角度和枝长扰动 |
+| 枝干截面边数 | 每条锥台枝段的径向边数 |
+| 生成枝端定位器 | 可视化枝端；完整 `AttachmentPoint[]` 始终由数据层输出 |
+| 季节 | 切换春夏秋冬的叶片和花朵状态 |
+| 叶片密度倍率 | 在季节默认密度上增减叶片数量 |
+| 叶片尺寸倍率 | 在季节默认尺寸上调整叶片大小 |
+| 树冠蓬松度 | 让叶簇和花簇离开枝条、填充周围三维冠层空间；`0` 为贴枝，`1` 为默认蓬松树冠 |
+| 花朵密度倍率 | 在季节默认花期上增减花朵数量 |
+| 花朵尺寸倍率 | 调整花朵整体尺寸，凋谢程度仍由季节控制 |
+| 动画开始/结束帧 | 控制所有天气和飘落效果的发射、积雪与播放范围 |
+| 风力强度 | `0–1`，控制整棵树的周期性弯曲幅度与频率 |
+| 风向角度 | 控制树木弯曲及落叶、落花漂移方向 |
+| 降雨强度 | `0–1`，控制固定雨滴顶点池的数量和下落速度 |
+| 飘雪与积雪强度 | `0–1`，控制固定雪片池、下落速度和雪帽顶点位移厚度 |
+| 落叶/落花强度 | `0–1`，控制从现有器官中选入固定飘落顶点池的数量 |
+
+## 代码结构
+
+```text
+maya_lsystem_tree_generator/
+├─ launcher.py          # Maya 启动入口
+├─ src/core.py          # 纯 Python L-System、3D turtle 和预设
+├─ src/assets.py        # CC0 器官目录、稳定加权选择和 OBJ 归一化加载
+├─ src/maya_mesh.py     # Maya 单网格构建器
+├─ src/foliage.py       # 四季、叶片/花朵分布与凋谢数据
+├─ src/maya_foliage.py  # 叶片、花瓣、花心合并网格及材质
+├─ src/weather.py       # 纯 Python 天气参数、强度映射与性能限额
+├─ src/vertex_animation.py # 保留的纯 Python 轨迹公式（当前天气模式不调用）
+├─ src/maya_weather.py  # Maya deformer、粒子、场、碰撞与实例动画
+├─ src/maya_ui.py       # Maya 参数面板
+├─ assets/organs/       # 叶片/花朵 OBJ、catalog、来源和 CC0 许可证
+└─ tests/test_core.py   # 不启动 Maya 即可运行的测试
+```
+
+## 测试
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+## 天气动画排查
+
+- 当前天气组属性 `animationMode` 应显示 `Maya deformers and particles`，`implementationVersion` 应显示 `3.0-original-particles`。
+- 播放范围会自动设置为界面中的开始帧和结束帧。粒子需要从开始帧向后播放以完成预滚；不要直接跳到后部帧查看。
+- 风由 bend deformer 表达式驱动；雨雪和落叶落花由 Maya 经典粒子动力学驱动。修改代码后必须重新执行 `launcher.py` 并重新生成树。

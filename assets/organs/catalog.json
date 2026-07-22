@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "source": {
+    "name": "Kenney Nature Kit 2.1",
+    "url": "https://kenney.nl/assets/nature-kit",
+    "license": "CC0-1.0",
+    "license_file": "LICENSE_KENNEY_CC0.txt"
+  },
+  "assets": [
+    {"id": "leaf_flat_short", "kind": "leaf", "file": "leaves/plant_flatShort.obj", "weight": 1.2, "scale": 1.00, "states": ["bud", "fresh", "mature", "dry"]},
+    {"id": "leaf_flat_tall", "kind": "leaf", "file": "leaves/plant_flatTall.obj", "weight": 1.0, "scale": 0.90, "states": ["fresh", "mature", "dry"]},
+    {"id": "leaf_crop_small", "kind": "leaf", "file": "leaves/crops_leafsStageA.obj", "weight": 0.8, "scale": 0.60, "states": ["bud", "fresh"]},
+    {"id": "leaf_crop_full", "kind": "leaf", "file": "leaves/crops_leafsStageB.obj", "weight": 1.0, "scale": 0.45, "states": ["fresh", "mature", "dry"]},
+    {"id": "leaf_grass_cluster", "kind": "leaf", "file": "leaves/grass_leafsLarge.obj", "weight": 0.35, "scale": 0.35, "states": ["mature", "dry"]},
+
+    {"id": "flower_purple_bud", "kind": "flower", "file": "flowers/flower_purpleC.obj", "weight": 0.7, "scale": 0.90, "states": ["bud", "wilted"]},
+    {"id": "flower_purple_open", "kind": "flower", "file": "flowers/flower_purpleA.obj", "weight": 1.0, "scale": 1.00, "states": ["bloom"]},
+    {"id": "flower_purple_wide", "kind": "flower", "file": "flowers/flower_purpleB.obj", "weight": 0.8, "scale": 0.90, "states": ["bloom"]},
+    {"id": "flower_red_bud", "kind": "flower", "file": "flowers/flower_redC.obj", "weight": 0.7, "scale": 0.90, "states": ["bud", "wilted"]},
+    {"id": "flower_red_open", "kind": "flower", "file": "flowers/flower_redA.obj", "weight": 1.0, "scale": 1.00, "states": ["bloom"]},
+    {"id": "flower_red_wide", "kind": "flower", "file": "flowers/flower_redB.obj", "weight": 0.8, "scale": 0.90, "states": ["bloom"]},
+    {"id": "flower_yellow_bud", "kind": "flower", "file": "flowers/flower_yellowC.obj", "weight": 0.7, "scale": 0.90, "states": ["bud", "wilted"]},
+    {"id": "flower_yellow_open", "kind": "flower", "file": "flowers/flower_yellowA.obj", "weight": 1.0, "scale": 1.00, "states": ["bloom"]},
+    {"id": "flower_yellow_wide", "kind": "flower", "file": "flowers/flower_yellowB.obj", "weight": 0.8, "scale": 0.90, "states": ["bloom"]}
+  ]
+}
