@@ -3,6 +3,7 @@
 from __future__ import division, print_function
 
 import math
+import json
 from collections import Counter
 
 from .foliage import (
@@ -242,6 +243,18 @@ def _material(cmds, name, color):
     return shading_group
 
 
+def _set_bool_attr(cmds, node, attr, value):
+    if not cmds.attributeQuery(attr, node=node, exists=True):
+        cmds.addAttr(node, longName=attr, attributeType="bool")
+    cmds.setAttr(node + "." + attr, bool(value))
+
+
+def _set_string_attr(cmds, node, attr, value):
+    if not cmds.attributeQuery(attr, node=node, exists=True):
+        cmds.addAttr(node, longName=attr, dataType="string")
+    cmds.setAttr(node + "." + attr, value, type="string")
+
+
 def _create_mesh(cmds, om, arrays, name, parent, shading_group):
     points, counts, connects = arrays
     if not points:
@@ -408,6 +421,7 @@ def create_foliage_in_maya(
     config = config or FoliageConfig(seed=tree_model.config.seed + 101)
     model = generate_foliage(tree_model, config)
     group = cmds.group(empty=True, name=name + "_Foliage", parent=parent_root)
+    _set_bool_attr(cmds, group, "lsystemFoliageManaged", True)
     meshes = []
     leaf_meshes = []
     flower_meshes = []
@@ -493,6 +507,12 @@ def create_foliage_in_maya(
         group + ".organAssetSource",
         "Kenney Nature Kit 2.1 (CC0-1.0)",
         type="string",
+    )
+    _set_string_attr(
+        cmds,
+        group,
+        "foliageConfigJson",
+        json.dumps(dict(config.__dict__), sort_keys=True),
     )
 
     return {

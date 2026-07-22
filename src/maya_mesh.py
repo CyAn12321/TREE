@@ -3,6 +3,7 @@
 from __future__ import division, print_function
 
 import math
+import json
 
 from .core import TreeConfig, generate_tree
 
@@ -111,6 +112,30 @@ def _get_bark_shading_group(cmds):
     return shading_group
 
 
+def _set_bool_attr(cmds, node, attr, value):
+    if not cmds.attributeQuery(attr, node=node, exists=True):
+        cmds.addAttr(node, longName=attr, attributeType="bool")
+    cmds.setAttr(node + "." + attr, bool(value))
+
+
+def _set_long_attr(cmds, node, attr, value):
+    if not cmds.attributeQuery(attr, node=node, exists=True):
+        cmds.addAttr(node, longName=attr, attributeType="long")
+    cmds.setAttr(node + "." + attr, int(value))
+
+
+def _set_string_attr(cmds, node, attr, value):
+    if not cmds.attributeQuery(attr, node=node, exists=True):
+        cmds.addAttr(node, longName=attr, dataType="string")
+    cmds.setAttr(node + "." + attr, value, type="string")
+
+
+def _ensure_user_overrides_group(cmds, root, name):
+    group = cmds.group(empty=True, name=name + "_User_Overrides", parent=root)
+    _set_bool_attr(cmds, group, "lsystemUserOverrides", True)
+    return group
+
+
 def create_tree_in_maya(
     config=None,
     name="LSystemTree",
@@ -141,6 +166,7 @@ def create_tree_in_maya(
         shape = cmds.listRelatives(transform, shapes=True, fullPath=True)[0]
         cmds.rename(shape, transform.split("|")[-1] + "Shape")
         cmds.parent(transform, root)
+        _set_bool_attr(cmds, transform, "lsystemBranchesManaged", True)
         cmds.polySoftEdge(transform, angle=55.0, constructionHistory=False)
         cmds.sets(
             transform,
@@ -151,6 +177,7 @@ def create_tree_in_maya(
         tip_group = None
         if create_tip_locators:
             tip_group = cmds.group(empty=True, name=name + "_Tips", parent=root)
+            _set_bool_attr(cmds, tip_group, "lsystemTipsManaged", True)
             locator_scale = max(config.minimum_radius * 4.0, 0.045)
             for index, tip in enumerate(model.tips):
                 locator = cmds.spaceLocator(
@@ -185,6 +212,16 @@ def create_tree_in_maya(
         cmds.setAttr(root + ".branchAngle", config.branch_angle)
         cmds.addAttr(root, longName="preset", dataType="string")
         cmds.setAttr(root + ".preset", config.preset_key, type="string")
+        _set_bool_attr(cmds, root, "lsystemEditableTree", True)
+        _set_long_attr(cmds, root, "radialSides", radial_sides)
+        _set_bool_attr(cmds, root, "createTipLocators", create_tip_locators)
+        _set_string_attr(
+            cmds,
+            root,
+            "treeConfigJson",
+            json.dumps(config.as_dict(), sort_keys=True),
+        )
+        _ensure_user_overrides_group(cmds, root, name)
 
         cmds.select(root, replace=True)
         return {

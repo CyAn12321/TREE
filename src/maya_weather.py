@@ -8,6 +8,7 @@ callbacks or pre-baked blendShape poses.
 from __future__ import division, print_function
 
 import math
+import json
 
 from . import maya_foliage
 from .weather import WeatherConfig, build_weather_plan
@@ -29,6 +30,12 @@ def _shape(cmds, transform):
 def _safe_set(cmds, plug, *values, **kwargs):
     if cmds.objExists(plug):
         cmds.setAttr(plug, *values, **kwargs)
+
+
+def _set_string_attr(cmds, node, attr, value):
+    if not cmds.attributeQuery(attr, node=node, exists=True):
+        cmds.addAttr(node, longName=attr, dataType="string")
+    cmds.setAttr(node + "." + attr, value, type="string")
 
 
 def _material(cmds, name, color, transparency=0.0):
@@ -581,6 +588,12 @@ def create_weather_in_maya(
         group + ".implementationVersion",
         "3.0-original-particles",
         type="string",
+    )
+    _set_string_attr(
+        cmds,
+        group,
+        "weatherConfigJson",
+        json.dumps(dict(config.__dict__), sort_keys=True),
     )
 
     managed = [group]
