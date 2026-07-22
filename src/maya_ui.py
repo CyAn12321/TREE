@@ -7,6 +7,7 @@ import random
 from . import core
 from . import foliage
 from . import maya_foliage
+from . import maya_editing
 from . import maya_mesh
 from . import maya_weather
 from . import weather
@@ -15,6 +16,46 @@ from . import weather
 WINDOW_NAME = "LSystemTreeGeneratorWindow"
 _CONTROLS = {}
 _LAST_ROOT = None
+
+
+PRESET_UI = {
+    "broadleaf_round": (
+        "Round Broadleaf",
+        "Wide branching and dense rounded canopy, suitable for common deciduous trees.",
+    ),
+    "conifer_pyramidal": (
+        "Pyramidal Conifer",
+        "Clear central axis with radial side branches, forming a tapered conifer-like silhouette.",
+    ),
+    "willow_weeping": (
+        "Weeping Willow",
+        "Long drooping side branches with a downward tropism, suitable for willow-like trees.",
+    ),
+    "columnar_poplar": (
+        "Columnar Poplar",
+        "Narrow upward branches that form a slim vertical canopy.",
+    ),
+}
+
+
+SEASON_UI = {
+    "spring": (
+        "Spring",
+        "Fresh young leaves, many open flowers, and bright seasonal colors.",
+    ),
+    "summer": (
+        "Summer",
+        "Dense mature foliage with deeper greens and only a few remaining flowers.",
+    ),
+    "autumn": (
+        "Autumn",
+        "Reduced foliage density, warm leaf colors, and wilted flowers.",
+    ),
+    "winter": (
+        "Winter",
+        "Almost bare branches with very sparse dry leaves and no flowers.",
+    ),
+}
 
 
 def _maya_cmds():
@@ -28,7 +69,7 @@ def _maya_cmds():
 def _selected_preset_key(cmds):
     selected_label = cmds.optionMenu(_CONTROLS["preset"], query=True, value=True)
     for preset in core.list_presets():
-        if preset.label == selected_label:
+        if PRESET_UI.get(preset.key, (preset.label, ""))[0] == selected_label:
             return preset.key
     raise RuntimeError("Cannot resolve selected tree preset")
 
@@ -36,9 +77,21 @@ def _selected_preset_key(cmds):
 def _selected_season_key(cmds):
     selected_label = cmds.optionMenu(_CONTROLS["season"], query=True, value=True)
     for season in foliage.list_seasons():
-        if season.label == selected_label:
+        if SEASON_UI.get(season.key, (season.label, ""))[0] == selected_label:
             return season.key
     raise RuntimeError("Cannot resolve selected season")
+
+
+def _preset_label(preset_key):
+    return PRESET_UI.get(preset_key, (None, ""))[0]
+
+
+def _season_label(season_key):
+    return SEASON_UI.get(season_key, (None, ""))[0]
+
+
+def _selected_editable_root(cmds):
+    return maya_editing.find_tree_root_from_selection(_LAST_ROOT)
 
 
 def _apply_preset(*unused):
@@ -59,17 +112,15 @@ def _apply_preset(*unused):
     cmds.floatSliderGrp(
         _CONTROLS["branch_angle"], edit=True, value=defaults["branch_angle"]
     )
-    cmds.text(_CONTROLS["description"], edit=True, label=preset.description)
+    description = PRESET_UI.get(preset.key, (preset.label, preset.description))[1]
+    cmds.text(_CONTROLS["description"], edit=True, label=description)
 
 
 def _apply_season(*unused):
     cmds = _maya_cmds()
     season = foliage.get_season(_selected_season_key(cmds))
-    cmds.text(
-        _CONTROLS["season_description"],
-        edit=True,
-        label=season.description,
-    )
+    description = SEASON_UI.get(season.key, (season.label, season.description))[1]
+    cmds.text(_CONTROLS["season_description"], edit=True, label=description)
 
 
 def _read_tree_config(cmds):
@@ -149,6 +200,8 @@ def _generate(*unused):
     result = None
     try:
         tree_config = _read_tree_config(cmds)
+        foliage_config = _read_foliage_config(cmds, tree_config.seed)
+        weather_config = _read_weather_config(cmds, tree_config.seed)
         result = maya_mesh.create_tree_in_maya(
             config=tree_config,
             name=cmds.textFieldGrp(_CONTROLS["name"], query=True, text=True),
@@ -164,32 +217,40 @@ def _generate(*unused):
         if cmds.checkBox(_CONTROLS["foliage"], query=True, value=True):
             foliage_result = maya_foliage.create_foliage_in_maya(
                 tree_model=result["model"],
-                config=_read_foliage_config(cmds, tree_config.seed),
+                config=foliage_config,
                 parent_root=result["root"],
                 name=result["root"].split("|")[-1],
             )
+            maya_editing.store_foliage_settings(result["root"], foliage_config)
 
         weather_result = None
         if cmds.checkBox(_CONTROLS["weather"], query=True, value=True):
             weather_result = maya_weather.create_weather_in_maya(
                 tree_result=result,
                 foliage_result=foliage_result,
-                config=_read_weather_config(cmds, tree_config.seed),
+                config=weather_config,
                 name=result["root"].split("|")[-1],
             )
+            maya_editing.store_weather_settings(result["root"], weather_config)
 
+        maya_editing.store_tree_settings(
+            result["root"],
+            tree_config,
+            cmds.intSliderGrp(_CONTROLS["radial_sides"], query=True, value=True),
+            cmds.checkBox(_CONTROLS["tips"], query=True, value=True),
+        )
         _LAST_ROOT = result["root"]
         leaf_count = len(foliage_result["model"].leaves) if foliage_result else 0
         flower_count = (
             len(foliage_result["model"].flowers) if foliage_result else 0
         )
-        message = "已生成：{} 枝段 / {} 叶片 / {} 花朵".format(
+        message = "Generated: {} branch segments / {} leaves / {} flowers".format(
             len(result["model"].segments),
             leaf_count,
             flower_count,
         )
         if weather_result and weather_result["group"]:
-            message += " / 天气动画"
+            message += " / weather animation"
         cmds.text(_CONTROLS["status"], edit=True, label=message)
         cmds.inViewMessage(
             assistMessage=message,
@@ -201,12 +262,200 @@ def _generate(*unused):
             maya_weather.delete_weather_nodes(result["root"])
             cmds.delete(result["root"])
         cmds.confirmDialog(
-            title="L-System 生成失败",
+            title="L-System Generation Failed",
             message=str(error),
-            button=["确定"],
+            button=["OK"],
             icon="critical",
         )
         raise
+
+
+def _load_selected_tree_parameters(*unused):
+    cmds = _maya_cmds()
+    root = _selected_editable_root(cmds)
+    tree_config = maya_editing.get_tree_config(root)
+    preset_label = _preset_label(tree_config.preset_key)
+    if preset_label:
+        cmds.optionMenu(_CONTROLS["preset"], edit=True, value=preset_label)
+    cmds.floatSliderGrp(
+        _CONTROLS["trunk_radius"], edit=True, value=tree_config.trunk_radius
+    )
+    cmds.intSliderGrp(
+        _CONTROLS["branch_levels"], edit=True, value=tree_config.branch_levels
+    )
+    cmds.intSliderGrp(
+        _CONTROLS["branches_per_node"],
+        edit=True,
+        value=tree_config.branches_per_node,
+    )
+    cmds.floatSliderGrp(
+        _CONTROLS["branch_angle"], edit=True, value=tree_config.branch_angle
+    )
+    cmds.intFieldGrp(_CONTROLS["seed"], edit=True, value1=tree_config.seed)
+    cmds.intSliderGrp(
+        _CONTROLS["radial_sides"],
+        edit=True,
+        value=maya_editing.get_radial_sides(root),
+    )
+    cmds.checkBox(
+        _CONTROLS["tips"],
+        edit=True,
+        value=maya_editing.get_tip_locator_flag(root),
+    )
+
+    foliage_config = maya_editing.get_foliage_config(root)
+    if foliage_config:
+        season_label = _season_label(foliage_config.season)
+        if season_label:
+            cmds.optionMenu(_CONTROLS["season"], edit=True, value=season_label)
+        cmds.floatSliderGrp(
+            _CONTROLS["leaf_density"],
+            edit=True,
+            value=foliage_config.leaf_density_multiplier,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["leaf_size"],
+            edit=True,
+            value=foliage_config.leaf_size_multiplier,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["canopy_spread"],
+            edit=True,
+            value=foliage_config.canopy_spread_multiplier,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["flower_density"],
+            edit=True,
+            value=foliage_config.flower_density_multiplier,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["flower_size"],
+            edit=True,
+            value=foliage_config.flower_size_multiplier,
+        )
+
+    weather_config = maya_editing.get_weather_config(root)
+    if weather_config:
+        cmds.floatSliderGrp(
+            _CONTROLS["wind_intensity"],
+            edit=True,
+            value=weather_config.wind_intensity,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["rain_intensity"],
+            edit=True,
+            value=weather_config.rain_intensity,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["snow_intensity"],
+            edit=True,
+            value=weather_config.snow_intensity,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["leaf_fall_intensity"],
+            edit=True,
+            value=weather_config.leaf_fall_intensity,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["flower_fall_intensity"],
+            edit=True,
+            value=weather_config.flower_fall_intensity,
+        )
+        cmds.floatSliderGrp(
+            _CONTROLS["wind_direction"],
+            edit=True,
+            value=weather_config.wind_direction_degrees,
+        )
+        cmds.intFieldGrp(
+            _CONTROLS["weather_start"],
+            edit=True,
+            value1=weather_config.start_frame,
+        )
+        cmds.intFieldGrp(
+            _CONTROLS["weather_end"],
+            edit=True,
+            value1=weather_config.end_frame,
+        )
+
+    preset = core.get_preset(tree_config.preset_key)
+    description = PRESET_UI.get(preset.key, (preset.label, preset.description))[1]
+    cmds.text(_CONTROLS["description"], edit=True, label=description)
+    _apply_season()
+    cmds.text(_CONTROLS["status"], edit=True, label="Loaded selected tree parameters")
+
+
+def _refresh_selected_branches(*unused):
+    global _LAST_ROOT
+    cmds = _maya_cmds()
+    root = _selected_editable_root(cmds)
+    tree_config = _read_tree_config(cmds)
+    tree_result = maya_editing.regenerate_branches(
+        root,
+        tree_config,
+        radial_sides=cmds.intSliderGrp(
+            _CONTROLS["radial_sides"], query=True, value=True
+        ),
+        create_tip_locators=cmds.checkBox(
+            _CONTROLS["tips"], query=True, value=True
+        ),
+    )
+    foliage_result = None
+    if cmds.checkBox(_CONTROLS["foliage"], query=True, value=True):
+        foliage_result = maya_editing.refresh_foliage(
+            root,
+            _read_foliage_config(cmds, tree_config.seed),
+        )
+    if cmds.checkBox(_CONTROLS["weather"], query=True, value=True):
+        maya_editing.refresh_weather(root, _read_weather_config(cmds, tree_config.seed))
+    _LAST_ROOT = root
+    leaf_count = len(foliage_result["model"].leaves) if foliage_result else 0
+    cmds.select(root, replace=True)
+    cmds.text(
+        _CONTROLS["status"],
+        edit=True,
+        label="Refreshed selected branches: {} segments / {} leaves".format(
+            len(tree_result["model"].segments),
+            leaf_count,
+        ),
+    )
+
+
+def _refresh_selected_foliage(*unused):
+    cmds = _maya_cmds()
+    root = _selected_editable_root(cmds)
+    tree_config = maya_editing.get_tree_config(root)
+    result = maya_editing.refresh_foliage(
+        root,
+        _read_foliage_config(cmds, tree_config.seed),
+    )
+    weather_refreshed = False
+    if cmds.checkBox(_CONTROLS["weather"], query=True, value=True):
+        maya_editing.refresh_weather(root, _read_weather_config(cmds, tree_config.seed))
+        weather_refreshed = True
+    cmds.select(root, replace=True)
+    suffix = " / rebuilt weather animation" if weather_refreshed else " / cleared old weather animation"
+    cmds.text(
+        _CONTROLS["status"],
+        edit=True,
+        label="Refreshed selected foliage: {} leaves / {} flowers{}".format(
+            len(result["model"].leaves),
+            len(result["model"].flowers),
+            suffix,
+        ),
+    )
+
+
+def _refresh_selected_weather(*unused):
+    cmds = _maya_cmds()
+    root = _selected_editable_root(cmds)
+    tree_config = maya_editing.get_tree_config(root)
+    result = maya_editing.refresh_weather(
+        root,
+        _read_weather_config(cmds, tree_config.seed),
+    )
+    cmds.select(root, replace=True)
+    label = "Refreshed weather animation for the selected tree" if result["group"] else "All weather strengths are 0; weather animation was cleared"
+    cmds.text(_CONTROLS["status"], edit=True, label=label)
 
 
 def _new_seed_and_generate(*unused):
@@ -225,7 +474,8 @@ def _delete_last(*unused):
     if _LAST_ROOT and cmds.objExists(_LAST_ROOT):
         maya_weather.delete_weather_nodes(_LAST_ROOT)
         cmds.delete(_LAST_ROOT)
-        cmds.text(_CONTROLS["status"], edit=True, label="已删除上一次生成结果")
+        cmds.text(_CONTROLS["status"], edit=True, label="Deleted the last generated tree")
+    cmds.text(_CONTROLS["status"], edit=True, label="Deleted the last generated tree")
     _LAST_ROOT = None
 
 
@@ -236,25 +486,25 @@ def show():
 
     window = cmds.window(
         WINDOW_NAME,
-        title="L-System 树木、叶片与花朵生成器",
+        title="L-System Tree, Foliage, and Flower Generator",
         sizeable=False,
-        widthHeight=(500, 860),
+        widthHeight=(560, 900),
     )
     cmds.scrollLayout(childResizable=True)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
     cmds.text(
-        label="L-System 参数化树木与四季器官系统",
+        label="Parametric L-System Tree and Seasonal Organ System",
         font="boldLabelFont",
         height=28,
     )
     cmds.separator(style="in")
 
     _CONTROLS["preset"] = cmds.optionMenu(
-        label="形态预设",
+        label="Tree Preset",
         changeCommand=_apply_preset,
     )
     for preset in core.list_presets():
-        cmds.menuItem(label=preset.label)
+        cmds.menuItem(label=PRESET_UI.get(preset.key, (preset.label, ""))[0])
     _CONTROLS["description"] = cmds.text(
         label="",
         align="left",
@@ -262,7 +512,7 @@ def show():
         height=38,
     )
     _CONTROLS["trunk_radius"] = cmds.floatSliderGrp(
-        label="主干半径",
+        label="Trunk Radius",
         field=True,
         minValue=0.05,
         maxValue=2.0,
@@ -271,7 +521,7 @@ def show():
         precision=3,
     )
     _CONTROLS["branch_levels"] = cmds.intSliderGrp(
-        label="分支层级（含主干）",
+        label="Branch Levels (including trunk)",
         field=True,
         minValue=1,
         maxValue=6,
@@ -279,7 +529,7 @@ def show():
         fieldMaxValue=7,
     )
     _CONTROLS["branches_per_node"] = cmds.intSliderGrp(
-        label="每个节点分叉数",
+        label="Branches per Node",
         field=True,
         minValue=1,
         maxValue=6,
@@ -288,7 +538,7 @@ def show():
         value=4,
     )
     _CONTROLS["branch_angle"] = cmds.floatSliderGrp(
-        label="分支角度",
+        label="Branch Angle",
         field=True,
         minValue=5.0,
         maxValue=60.0,
@@ -296,35 +546,35 @@ def show():
         fieldMaxValue=80.0,
         precision=1,
     )
-    _CONTROLS["seed"] = cmds.intFieldGrp(label="随机种子", value1=17)
+    _CONTROLS["seed"] = cmds.intFieldGrp(label="Random Seed", value1=17)
     _CONTROLS["radial_sides"] = cmds.intSliderGrp(
-        label="枝干截面边数",
+        label="Branch Radial Sides",
         field=True,
         minValue=4,
         maxValue=16,
         value=8,
     )
     _CONTROLS["name"] = cmds.textFieldGrp(
-        label="模型名称",
+        label="Model Name",
         text="LSystemTree",
     )
     _CONTROLS["tips"] = cmds.checkBox(
-        label="生成枝端定位器（后续动画附着点）",
+        label="Create Tip Locators for Attachments",
         value=False,
     )
 
     cmds.separator(style="in")
-    cmds.text(label="季节、叶片与花朵", font="boldLabelFont", height=24)
+    cmds.text(label="Seasonal Leaves and Flowers", font="boldLabelFont", height=24)
     _CONTROLS["foliage"] = cmds.checkBox(
-        label="生成叶片和花朵",
+        label="Generate Leaves and Flowers",
         value=True,
     )
     _CONTROLS["season"] = cmds.optionMenu(
-        label="季节",
+        label="Season",
         changeCommand=_apply_season,
     )
     for season in foliage.list_seasons():
-        cmds.menuItem(label=season.label)
+        cmds.menuItem(label=SEASON_UI.get(season.key, (season.label, ""))[0])
     _CONTROLS["season_description"] = cmds.text(
         label="",
         align="left",
@@ -332,7 +582,7 @@ def show():
         height=38,
     )
     _CONTROLS["leaf_density"] = cmds.floatSliderGrp(
-        label="叶片密度倍率",
+        label="Leaf Density Multiplier",
         field=True,
         minValue=0.0,
         maxValue=3.0,
@@ -342,7 +592,7 @@ def show():
         precision=2,
     )
     _CONTROLS["leaf_size"] = cmds.floatSliderGrp(
-        label="叶片尺寸倍率",
+        label="Leaf Size Multiplier",
         field=True,
         minValue=0.2,
         maxValue=2.0,
@@ -352,7 +602,7 @@ def show():
         precision=2,
     )
     _CONTROLS["canopy_spread"] = cmds.floatSliderGrp(
-        label="树冠蓬松度",
+        label="Canopy Fluffiness",
         field=True,
         minValue=0.0,
         maxValue=2.5,
@@ -362,7 +612,7 @@ def show():
         precision=2,
     )
     _CONTROLS["flower_density"] = cmds.floatSliderGrp(
-        label="花朵密度倍率",
+        label="Flower Density Multiplier",
         field=True,
         minValue=0.0,
         maxValue=3.0,
@@ -372,7 +622,7 @@ def show():
         precision=2,
     )
     _CONTROLS["flower_size"] = cmds.floatSliderGrp(
-        label="花朵尺寸倍率",
+        label="Flower Size Multiplier",
         field=True,
         minValue=0.2,
         maxValue=2.0,
@@ -383,21 +633,21 @@ def show():
     )
 
     cmds.separator(style="in")
-    cmds.text(label="天气与器官飘落动画", font="boldLabelFont", height=24)
+    cmds.text(label="Weather and Falling Organ Animation", font="boldLabelFont", height=24)
     _CONTROLS["weather"] = cmds.checkBox(
-        label="生成天气和飘落动画",
+        label="Generate Weather and Falling Organ Animation",
         value=False,
     )
     _CONTROLS["weather_start"] = cmds.intFieldGrp(
-        label="动画开始帧",
+        label="Animation Start Frame",
         value1=1,
     )
     _CONTROLS["weather_end"] = cmds.intFieldGrp(
-        label="动画结束帧",
+        label="Animation End Frame",
         value1=240,
     )
     _CONTROLS["wind_intensity"] = cmds.floatSliderGrp(
-        label="风力强度",
+        label="Wind Intensity",
         field=True,
         minValue=0.0,
         maxValue=1.0,
@@ -405,7 +655,7 @@ def show():
         precision=2,
     )
     _CONTROLS["wind_direction"] = cmds.floatSliderGrp(
-        label="风向角度",
+        label="Wind Direction Angle",
         field=True,
         minValue=0.0,
         maxValue=360.0,
@@ -413,7 +663,7 @@ def show():
         precision=1,
     )
     _CONTROLS["rain_intensity"] = cmds.floatSliderGrp(
-        label="降雨强度",
+        label="Rain Intensity",
         field=True,
         minValue=0.0,
         maxValue=1.0,
@@ -421,7 +671,7 @@ def show():
         precision=2,
     )
     _CONTROLS["snow_intensity"] = cmds.floatSliderGrp(
-        label="飘雪与积雪强度",
+        label="Snowfall and Accumulation Intensity",
         field=True,
         minValue=0.0,
         maxValue=1.0,
@@ -429,7 +679,7 @@ def show():
         precision=2,
     )
     _CONTROLS["leaf_fall_intensity"] = cmds.floatSliderGrp(
-        label="落叶强度",
+        label="Falling Leaf Intensity",
         field=True,
         minValue=0.0,
         maxValue=1.0,
@@ -437,7 +687,7 @@ def show():
         precision=2,
     )
     _CONTROLS["flower_fall_intensity"] = cmds.floatSliderGrp(
-        label="落花强度",
+        label="Falling Flower Intensity",
         field=True,
         minValue=0.0,
         maxValue=1.0,
@@ -447,16 +697,24 @@ def show():
 
     cmds.separator(style="in")
     cmds.button(
-        label="生成完整树模型",
+        label="Generate Complete Tree Model",
         height=36,
         backgroundColor=(0.22, 0.42, 0.20),
         command=_generate,
     )
     cmds.rowLayout(numberOfColumns=2, adjustableColumn=1)
-    cmds.button(label="换随机种子并生成", command=_new_seed_and_generate)
-    cmds.button(label="删除上一次结果", command=_delete_last)
+    cmds.button(label="Randomize Seed and Generate", command=_new_seed_and_generate)
+    cmds.button(label="Delete Last Result", command=_delete_last)
     cmds.setParent("..")
-    _CONTROLS["status"] = cmds.text(label="等待生成", align="left", height=24)
+    cmds.separator(style="in")
+    cmds.text(label="Editable Tree: select the root or any child object", font="boldLabelFont", height=24)
+    cmds.button(label="Load Selected Tree Parameters", command=_load_selected_tree_parameters)
+    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1)
+    cmds.button(label="Refresh Branches", command=_refresh_selected_branches)
+    cmds.button(label="Refresh Foliage", command=_refresh_selected_foliage)
+    cmds.button(label="Refresh Weather Animation", command=_refresh_selected_weather)
+    cmds.setParent("..")
+    _CONTROLS["status"] = cmds.text(label="Ready to generate", align="left", height=24)
 
     _apply_preset()
     _apply_season()
