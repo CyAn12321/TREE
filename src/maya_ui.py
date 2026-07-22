@@ -2,6 +2,7 @@
 
 from __future__ import print_function
 
+import os
 import random
 
 from . import core
@@ -479,6 +480,19 @@ def _delete_last(*unused):
     _LAST_ROOT = None
 
 
+def _logo_path():
+    """Return the workspace logo path when the bundled image is available."""
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = (
+        os.path.join(project_root, "GUI_image.png"),
+        os.path.join(os.path.dirname(project_root), "GUI_image.png"),
+    )
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def show():
     cmds = _maya_cmds()
     if cmds.window(WINDOW_NAME, exists=True):
@@ -486,25 +500,45 @@ def show():
 
     window = cmds.window(
         WINDOW_NAME,
-        title="L-System Tree, Foliage, and Flower Generator",
+        title="L-System Tree Generator",
         sizeable=False,
-        widthHeight=(560, 900),
+        widthHeight=(580, 940),
     )
     cmds.scrollLayout(childResizable=True)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
-    cmds.text(
-        label="Parametric L-System Tree and Seasonal Organ System",
-        font="boldLabelFont",
-        height=28,
+
+    logo_path = _logo_path()
+    if logo_path:
+        cmds.image(image=logo_path, width=560, height=165)
+    cmds.text(label="L-System Tree Generator", font="boldLabelFont", height=28)
+
+    # Level 1: Tree Generation
+    cmds.frameLayout(
+        label="TREE GENERATION",
+        collapsable=True,
+        collapse=False,
+        marginWidth=10,
+        marginHeight=8,
     )
-    cmds.separator(style="in")
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+
+    # Level 2: Trunk Generation
+    cmds.frameLayout(
+        label="Trunk Generation",
+        collapsable=True,
+        collapse=False,
+        marginWidth=8,
+        marginHeight=6,
+    )
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=5)
 
     _CONTROLS["preset"] = cmds.optionMenu(
-        label="Tree Preset",
+        label="Tree Species",
         changeCommand=_apply_preset,
     )
     for preset in core.list_presets():
         cmds.menuItem(label=PRESET_UI.get(preset.key, (preset.label, ""))[0])
+    cmds.text(label="Description", align="left", font="smallBoldLabelFont")
     _CONTROLS["description"] = cmds.text(
         label="",
         align="left",
@@ -546,43 +580,28 @@ def show():
         fieldMaxValue=80.0,
         precision=1,
     )
-    _CONTROLS["seed"] = cmds.intFieldGrp(label="Random Seed", value1=17)
+    _CONTROLS["seed"] = cmds.intFieldGrp(label="Seed", value1=17)
     _CONTROLS["radial_sides"] = cmds.intSliderGrp(
-        label="Branch Radial Sides",
+        label="Radial Sides",
         field=True,
         minValue=4,
         maxValue=16,
         value=8,
     )
-    _CONTROLS["name"] = cmds.textFieldGrp(
-        label="Model Name",
-        text="LSystemTree",
-    )
-    _CONTROLS["tips"] = cmds.checkBox(
-        label="Create Tip Locators for Attachments",
-        value=False,
-    )
+    cmds.setParent("..")
+    cmds.setParent("..")
 
-    cmds.separator(style="in")
-    cmds.text(label="Seasonal Leaves and Flowers", font="boldLabelFont", height=24)
-    _CONTROLS["foliage"] = cmds.checkBox(
-        label="Generate Leaves and Flowers",
-        value=True,
+    # Level 2: Foliage Generation
+    cmds.frameLayout(
+        label="Leaf and Flower Generation",
+        collapsable=True,
+        collapse=False,
+        marginWidth=8,
+        marginHeight=6,
     )
-    _CONTROLS["season"] = cmds.optionMenu(
-        label="Season",
-        changeCommand=_apply_season,
-    )
-    for season in foliage.list_seasons():
-        cmds.menuItem(label=SEASON_UI.get(season.key, (season.label, ""))[0])
-    _CONTROLS["season_description"] = cmds.text(
-        label="",
-        align="left",
-        wordWrap=True,
-        height=38,
-    )
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=5)
     _CONTROLS["leaf_density"] = cmds.floatSliderGrp(
-        label="Leaf Density Multiplier",
+        label="Leaf Density",
         field=True,
         minValue=0.0,
         maxValue=3.0,
@@ -592,7 +611,7 @@ def show():
         precision=2,
     )
     _CONTROLS["leaf_size"] = cmds.floatSliderGrp(
-        label="Leaf Size Multiplier",
+        label="Leaf Size",
         field=True,
         minValue=0.2,
         maxValue=2.0,
@@ -602,7 +621,7 @@ def show():
         precision=2,
     )
     _CONTROLS["canopy_spread"] = cmds.floatSliderGrp(
-        label="Canopy Fluffiness",
+        label="Canopy Spread",
         field=True,
         minValue=0.0,
         maxValue=2.5,
@@ -612,7 +631,7 @@ def show():
         precision=2,
     )
     _CONTROLS["flower_density"] = cmds.floatSliderGrp(
-        label="Flower Density Multiplier",
+        label="Flower Density",
         field=True,
         minValue=0.0,
         maxValue=3.0,
@@ -622,7 +641,7 @@ def show():
         precision=2,
     )
     _CONTROLS["flower_size"] = cmds.floatSliderGrp(
-        label="Flower Size Multiplier",
+        label="Flower Size",
         field=True,
         minValue=0.2,
         maxValue=2.0,
@@ -631,19 +650,79 @@ def show():
         value=1.0,
         precision=2,
     )
+    cmds.setParent("..")
+    cmds.setParent("..")
 
-    cmds.separator(style="in")
-    cmds.text(label="Weather and Falling Organ Animation", font="boldLabelFont", height=24)
-    _CONTROLS["weather"] = cmds.checkBox(
-        label="Generate Weather and Falling Organ Animation",
-        value=False,
+    # Level 2: Confirmation Generation
+    cmds.frameLayout(
+        label="Confirm Generation",
+        collapsable=True,
+        collapse=False,
+        marginWidth=8,
+        marginHeight=6,
     )
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+    _CONTROLS["name"] = cmds.textFieldGrp(label="Model Name", text="LSystemTree")
+    cmds.button(
+        label="Generate Tree Model",
+        height=36,
+        backgroundColor=(0.22, 0.42, 0.20),
+        command=_generate,
+    )
+    cmds.button(
+        label="Delete Tree Model",
+        height=30,
+        backgroundColor=(0.42, 0.22, 0.20),
+        command=_delete_last,
+    )
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")
+    cmds.setParent("..")
+
+    # Level 1: Season System
+    cmds.frameLayout(
+        label="SEASON SYSTEM",
+        collapsable=True,
+        collapse=False,
+        marginWidth=10,
+        marginHeight=8,
+    )
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=6)
+    _CONTROLS["season"] = cmds.optionMenu(label="Season", changeCommand=_apply_season)
+    for season in foliage.list_seasons():
+        cmds.menuItem(label=SEASON_UI.get(season.key, (season.label, ""))[0])
+    cmds.text(label="Season Description", align="left", font="smallBoldLabelFont")
+    _CONTROLS["season_description"] = cmds.text(
+        label="",
+        align="left",
+        wordWrap=True,
+        height=38,
+    )
+    cmds.button(
+        label="Apply Season",
+        height=30,
+        backgroundColor=(0.28, 0.40, 0.24),
+        command=_refresh_selected_foliage,
+    )
+    cmds.setParent("..")
+    cmds.setParent("..")
+
+    # Level 1: Weather System
+    cmds.frameLayout(
+        label="WEATHER SYSTEM",
+        collapsable=True,
+        collapse=False,
+        marginWidth=10,
+        marginHeight=8,
+    )
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=5)
     _CONTROLS["weather_start"] = cmds.intFieldGrp(
-        label="Animation Start Frame",
+        label="Weather Start",
         value1=1,
     )
     _CONTROLS["weather_end"] = cmds.intFieldGrp(
-        label="Animation End Frame",
+        label="Weather End",
         value1=240,
     )
     _CONTROLS["wind_intensity"] = cmds.floatSliderGrp(
@@ -655,7 +734,7 @@ def show():
         precision=2,
     )
     _CONTROLS["wind_direction"] = cmds.floatSliderGrp(
-        label="Wind Direction Angle",
+        label="Wind Direction",
         field=True,
         minValue=0.0,
         maxValue=360.0,
@@ -671,7 +750,7 @@ def show():
         precision=2,
     )
     _CONTROLS["snow_intensity"] = cmds.floatSliderGrp(
-        label="Snowfall and Accumulation Intensity",
+        label="Snow Intensity",
         field=True,
         minValue=0.0,
         maxValue=1.0,
@@ -679,7 +758,7 @@ def show():
         precision=2,
     )
     _CONTROLS["leaf_fall_intensity"] = cmds.floatSliderGrp(
-        label="Falling Leaf Intensity",
+        label="Leaf Fall Intensity",
         field=True,
         minValue=0.0,
         maxValue=1.0,
@@ -687,33 +766,27 @@ def show():
         precision=2,
     )
     _CONTROLS["flower_fall_intensity"] = cmds.floatSliderGrp(
-        label="Falling Flower Intensity",
+        label="Flower Fall Intensity",
         field=True,
         minValue=0.0,
         maxValue=1.0,
         value=0.0,
         precision=2,
     )
-
-    cmds.separator(style="in")
     cmds.button(
-        label="Generate Complete Tree Model",
-        height=36,
-        backgroundColor=(0.22, 0.42, 0.20),
-        command=_generate,
+        label="Apply Weather",
+        height=30,
+        backgroundColor=(0.24, 0.34, 0.44),
+        command=_refresh_selected_weather,
     )
-    cmds.rowLayout(numberOfColumns=2, adjustableColumn=1)
-    cmds.button(label="Randomize Seed and Generate", command=_new_seed_and_generate)
-    cmds.button(label="Delete Last Result", command=_delete_last)
     cmds.setParent("..")
-    cmds.separator(style="in")
-    cmds.text(label="Editable Tree: select the root or any child object", font="boldLabelFont", height=24)
-    cmds.button(label="Load Selected Tree Parameters", command=_load_selected_tree_parameters)
-    cmds.rowLayout(numberOfColumns=3, adjustableColumn=1)
-    cmds.button(label="Refresh Branches", command=_refresh_selected_branches)
-    cmds.button(label="Refresh Foliage", command=_refresh_selected_foliage)
-    cmds.button(label="Refresh Weather Animation", command=_refresh_selected_weather)
     cmds.setParent("..")
+
+    # Internal defaults preserve the existing generation workflow without adding
+    # controls outside the requested three top-level sections.
+    _CONTROLS["foliage"] = cmds.checkBox(visible=False, value=True)
+    _CONTROLS["weather"] = cmds.checkBox(visible=False, value=False)
+    _CONTROLS["tips"] = cmds.checkBox(visible=False, value=False)
     _CONTROLS["status"] = cmds.text(label="Ready to generate", align="left", height=24)
 
     _apply_preset()
