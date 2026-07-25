@@ -823,15 +823,39 @@ def _apply_pipe_model(segments, config, exponent=2.3):
     for root in graph.roots:
         terminal_load(root)
     root_load = max(loads[root] for root in graph.roots)
+
+    # Compute the load-driven target first.  A child used to start at
+    # ``min(parent.end_radius, target_radius)`` which created a visible step
+    # at every fork.  The parent endpoint is now the shared junction radius;
+    # the child eases down to its own target over its first segment.
+    target_radii = {}
     for segment in segments:
-        load_radius = config.trunk_radius * ((loads[segment.index] / root_load) ** (1.0 / exponent))
-        load_radius *= config.branch_radius_ratio ** (segment.depth * 0.22)
+        target_radius = config.trunk_radius * (
+            (loads[segment.index] / root_load) ** (1.0 / exponent)
+        )
+        target_radii[segment.index] = max(
+            config.minimum_radius,
+            target_radius * config.branch_radius_ratio ** (segment.depth * 0.22),
+        )
+
+    for segment in segments:
         if segment.parent_index is None:
             segment.start_radius = config.trunk_radius
         else:
-            segment.start_radius = min(segments[segment.parent_index].end_radius, load_radius)
-        segment.start_radius = max(config.minimum_radius, segment.start_radius)
-        segment.end_radius = max(config.minimum_radius, segment.start_radius * config.segment_taper)
+            # Every parent/child pair shares the same radius at the junction.
+            # This is especially important at a fork, where the old min()
+            # caused the child cylinder to become thin immediately.
+            segment.start_radius = max(
+                config.minimum_radius,
+                segments[segment.parent_index].end_radius,
+            )
+        segment.end_radius = max(
+            config.minimum_radius,
+            min(
+                segment.start_radius * config.segment_taper,
+                target_radii[segment.index],
+            ),
+        )
 
 
 def build_attachment_points(segments, tips, config, samples_per_segment=3):

@@ -39,10 +39,12 @@ def _normalize(vector):
     return _mul(vector, 1.0 / length)
 
 
-def build_mesh_arrays(model, radial_sides=8):
+def build_mesh_arrays(model, radial_sides=8, radius_rings=4):
     """Return points and face topology without importing Maya."""
     if radial_sides < 3:
         raise ValueError("radial_sides must be at least 3")
+    if radius_rings < 1:
+        raise ValueError("radius_rings must be at least 1")
     points = []
     face_counts = []
     face_connects = []
@@ -56,10 +58,20 @@ def build_mesh_arrays(model, radial_sides=8):
         binormal = _normalize(_cross(direction, side))
         base = len(points)
 
-        for position, radius in (
-            (segment.start, segment.start_radius),
-            (segment.end, segment.end_radius),
-        ):
+        # A single cone gives a constant taper slope and makes each fork
+        # look like a hard radius break.  Multiple rings plus smoothstep make
+        # the radius slope zero at both ends, so adjacent branch segments
+        # meet without a visible kink.
+        for ring_index in range(radius_rings + 1):
+            amount = ring_index / float(radius_rings)
+            smooth_amount = amount * amount * (3.0 - 2.0 * amount)
+            radius = segment.start_radius + (
+                segment.end_radius - segment.start_radius
+            ) * smooth_amount
+            position = _add(
+                segment.start,
+                _mul(_sub(segment.end, segment.start), amount),
+            )
             for index in range(radial_sides):
                 radians = 2.0 * math.pi * index / radial_sides
                 offset = _add(
@@ -68,23 +80,27 @@ def build_mesh_arrays(model, radial_sides=8):
                 )
                 points.append(_add(position, offset))
 
-        for index in range(radial_sides):
-            next_index = (index + 1) % radial_sides
-            face_counts.append(4)
-            face_connects.extend(
-                (
-                    base + index,
-                    base + next_index,
-                    base + radial_sides + next_index,
-                    base + radial_sides + index,
+        for ring_index in range(radius_rings):
+            ring_base = base + ring_index * radial_sides
+            next_ring_base = ring_base + radial_sides
+            for index in range(radial_sides):
+                next_index = (index + 1) % radial_sides
+                face_counts.append(4)
+                face_connects.extend(
+                    (
+                        ring_base + index,
+                        ring_base + next_index,
+                        next_ring_base + next_index,
+                        next_ring_base + index,
+                    )
                 )
-            )
 
         face_counts.append(radial_sides)
         face_connects.extend(base + index for index in reversed(range(radial_sides)))
         face_counts.append(radial_sides)
         face_connects.extend(
-            base + radial_sides + index for index in range(radial_sides)
+            base + radius_rings * radial_sides + index
+            for index in range(radial_sides)
         )
 
     return points, face_counts, face_connects
@@ -141,6 +157,7 @@ def create_tree_in_maya(
     name="LSystemTree",
     radial_sides=8,
     create_tip_locators=False,
+    radius_rings=4,
 ):
     """Generate a tree and create one Maya mesh plus optional tip locators."""
     try:
@@ -151,7 +168,9 @@ def create_tree_in_maya(
 
     config = config or TreeConfig.from_preset("broadleaf_round")
     model = generate_tree(config)
-    raw_points, face_counts, face_connects = build_mesh_arrays(model, radial_sides)
+    raw_points, face_counts, face_connects = build_mesh_arrays(
+        model, radial_sides, radius_rings
+    )
     maya_points = [om.MPoint(*point) for point in raw_points]
 
     root = None
@@ -214,6 +233,7 @@ def create_tree_in_maya(
         cmds.setAttr(root + ".preset", config.preset_key, type="string")
         _set_bool_attr(cmds, root, "lsystemEditableTree", True)
         _set_long_attr(cmds, root, "radialSides", radial_sides)
+        _set_long_attr(cmds, root, "radiusRings", radius_rings)
         _set_bool_attr(cmds, root, "createTipLocators", create_tip_locators)
         _set_string_attr(
             cmds,
