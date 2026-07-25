@@ -49,6 +49,28 @@ class TreeGeneratorTests(unittest.TestCase):
         self.assertGreater(len(dense.segments), len(sparse.segments) * 2)
         self.assertGreater(len(dense.tips), len(sparse.tips) * 2)
 
+    def test_internode_density_adds_branches_without_changing_fork_count(self):
+        sparse = generate_tree(
+            TreeConfig.from_preset(
+                "broadleaf_round",
+                branch_levels=4,
+                branches_per_node=2,
+                internode_branch_density=0.0,
+                seed=23,
+            )
+        )
+        dense = generate_tree(
+            TreeConfig.from_preset(
+                "broadleaf_round",
+                branch_levels=4,
+                branches_per_node=2,
+                internode_branch_density=0.8,
+                seed=23,
+            )
+        )
+        self.assertGreater(len(dense.segments), len(sparse.segments))
+        self.assertGreater(len(dense.tips), len(sparse.tips))
+
     def test_same_seed_is_reproducible(self):
         first = generate_tree(
             TreeConfig.from_preset("conifer_pyramidal", branch_levels=3, seed=80)

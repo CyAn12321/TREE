@@ -15,6 +15,8 @@ from . import weather
 
 
 WINDOW_NAME = "LSystemTreeGeneratorWindow"
+BASE_WINDOW_WIDTH = 580
+BASE_WINDOW_HEIGHT = 940
 _CONTROLS = {}
 _LAST_ROOT = None
 
@@ -95,6 +97,22 @@ def _selected_editable_root(cmds):
     return maya_editing.find_tree_root_from_selection(_LAST_ROOT)
 
 
+def _apply_ui_scale(*unused):
+    """Resize the tool window using a common UI scale factor."""
+    cmds = _maya_cmds()
+    scale = cmds.floatSliderGrp(
+        _CONTROLS["ui_scale"], query=True, value=True
+    )
+    cmds.window(
+        WINDOW_NAME,
+        edit=True,
+        widthHeight=(
+            int(round(BASE_WINDOW_WIDTH * scale)),
+            int(round(BASE_WINDOW_HEIGHT * scale)),
+        ),
+    )
+
+
 def _apply_preset(*unused):
     cmds = _maya_cmds()
     preset = core.get_preset(_selected_preset_key(cmds))
@@ -112,6 +130,11 @@ def _apply_preset(*unused):
     )
     cmds.floatSliderGrp(
         _CONTROLS["branch_angle"], edit=True, value=defaults["branch_angle"]
+    )
+    cmds.floatSliderGrp(
+        _CONTROLS["internode_branch_density"],
+        edit=True,
+        value=defaults["internode_branch_density"],
     )
     description = PRESET_UI.get(preset.key, (preset.label, preset.description))[1]
     cmds.text(_CONTROLS["description"], edit=True, label=description)
@@ -138,6 +161,9 @@ def _read_tree_config(cmds):
         ),
         branch_angle=cmds.floatSliderGrp(
             _CONTROLS["branch_angle"], query=True, value=True
+        ),
+        internode_branch_density=cmds.floatSliderGrp(
+            _CONTROLS["internode_branch_density"], query=True, value=True
         ),
         seed=cmds.intFieldGrp(_CONTROLS["seed"], query=True, value1=True),
     )
@@ -291,6 +317,11 @@ def _load_selected_tree_parameters(*unused):
     )
     cmds.floatSliderGrp(
         _CONTROLS["branch_angle"], edit=True, value=tree_config.branch_angle
+    )
+    cmds.floatSliderGrp(
+        _CONTROLS["internode_branch_density"],
+        edit=True,
+        value=tree_config.internode_branch_density,
     )
     cmds.intFieldGrp(_CONTROLS["seed"], edit=True, value1=tree_config.seed)
     cmds.intSliderGrp(
@@ -501,8 +532,11 @@ def show():
     window = cmds.window(
         WINDOW_NAME,
         title="L-System Tree Generator",
-        sizeable=False,
-        widthHeight=(580, 940),
+        sizeable=True,
+        resizeToFitChildren=False,
+        minimizeButton=True,
+        maximizeButton=True,
+        widthHeight=(BASE_WINDOW_WIDTH, BASE_WINDOW_HEIGHT),
     )
     cmds.scrollLayout(childResizable=True)
     cmds.columnLayout(adjustableColumn=True, rowSpacing=8)
@@ -511,6 +545,18 @@ def show():
     if logo_path:
         cmds.image(image=logo_path, width=560, height=165)
     cmds.text(label="L-System Tree Generator", font="boldLabelFont", height=28)
+    _CONTROLS["ui_scale"] = cmds.floatSliderGrp(
+        label="UI Scale",
+        field=True,
+        minValue=0.75,
+        maxValue=1.50,
+        fieldMinValue=0.50,
+        fieldMaxValue=2.00,
+        value=1.00,
+        precision=2,
+        changeCommand=_apply_ui_scale,
+        annotation="Resize the generator window while keeping the UI layout intact",
+    )
 
     # Level 1: Tree Generation
     cmds.frameLayout(
@@ -579,6 +625,17 @@ def show():
         fieldMinValue=1.0,
         fieldMaxValue=80.0,
         precision=1,
+    )
+    _CONTROLS["internode_branch_density"] = cmds.floatSliderGrp(
+        label="Internode Branch Density",
+        field=True,
+        minValue=0.0,
+        maxValue=1.0,
+        fieldMinValue=0.0,
+        fieldMaxValue=1.0,
+        value=0.42,
+        precision=2,
+        annotation="Probability of recursive lateral buds along F segments",
     )
     _CONTROLS["seed"] = cmds.intFieldGrp(label="Seed", value1=17)
     _CONTROLS["radial_sides"] = cmds.intSliderGrp(
@@ -792,4 +849,13 @@ def show():
     _apply_preset()
     _apply_season()
     cmds.showWindow(window)
+    # Maya can restore a previous fixed-size window state after showWindow.
+    # Re-apply these flags after showing so the native resize border is active.
+    cmds.window(
+        WINDOW_NAME,
+        edit=True,
+        sizeable=True,
+        resizeToFitChildren=False,
+        widthHeight=(BASE_WINDOW_WIDTH, BASE_WINDOW_HEIGHT),
+    )
     return window
