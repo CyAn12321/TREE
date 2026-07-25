@@ -128,17 +128,28 @@ class TreeGeneratorTests(unittest.TestCase):
             if segment.parent_index is not None:
                 self.assertLess(segment.parent_index, segment.index)
 
+    def test_radius_is_continuous_from_parent_to_child(self):
+        model = generate_tree(
+            TreeConfig.from_preset("broadleaf_round", branch_levels=4, seed=17)
+        )
+        for segment in model.segments:
+            if segment.parent_index is None:
+                continue
+            parent = model.segments[segment.parent_index]
+            self.assertAlmostEqual(segment.start_radius, parent.end_radius)
+
     def test_mesh_topology_matches_branch_count(self):
         model = generate_tree(
             TreeConfig.from_preset("columnar_poplar", branch_levels=3, seed=22)
         )
         sides = 7
-        points, counts, connects = build_mesh_arrays(model, sides)
-        self.assertEqual(len(points), len(model.segments) * sides * 2)
-        self.assertEqual(len(counts), len(model.segments) * (sides + 2))
+        rings = 4
+        points, counts, connects = build_mesh_arrays(model, sides, rings)
+        self.assertEqual(len(points), len(model.segments) * sides * (rings + 1))
+        self.assertEqual(len(counts), len(model.segments) * (sides * rings + 2))
         self.assertEqual(
             len(connects),
-            len(model.segments) * (sides * 6),
+            len(model.segments) * (sides * rings * 4 + sides * 2),
         )
 
 
