@@ -108,6 +108,7 @@ PRESETS = (
             "segment_taper": 0.965,
             "angle_jitter": 6.0,
             "length_jitter": 0.12,
+            "internode_branch_density": 0.42,
             "branch_tropism": (0.0, 1.0, 0.0),
             "branch_tropism_strength": 0.07,
         },
@@ -135,6 +136,7 @@ PRESETS = (
             "segment_taper": 0.975,
             "angle_jitter": 3.5,
             "length_jitter": 0.07,
+            "internode_branch_density": 0.56,
             "branch_tropism": (0.0, 1.0, 0.0),
             "branch_tropism_strength": 0.04,
         },
@@ -161,6 +163,7 @@ PRESETS = (
             "segment_taper": 0.96,
             "angle_jitter": 7.0,
             "length_jitter": 0.14,
+            "internode_branch_density": 0.48,
             "branch_tropism": (0.0, -1.0, 0.0),
             "branch_tropism_strength": 0.14,
         },
@@ -187,6 +190,7 @@ PRESETS = (
             "segment_taper": 0.972,
             "angle_jitter": 3.0,
             "length_jitter": 0.08,
+            "internode_branch_density": 0.62,
             "branch_tropism": (0.0, 1.0, 0.0),
             "branch_tropism_strength": 0.18,
         },
@@ -228,6 +232,7 @@ class TreeConfig(object):
         segment_taper=0.965,
         angle_jitter=6.0,
         length_jitter=0.12,
+        internode_branch_density=0.42,
         branch_tropism=(0.0, 1.0, 0.0),
         branch_tropism_strength=0.07,
         minimum_radius=0.016,
@@ -245,6 +250,7 @@ class TreeConfig(object):
         self.segment_taper = float(segment_taper)
         self.angle_jitter = float(angle_jitter)
         self.length_jitter = float(length_jitter)
+        self.internode_branch_density = float(internode_branch_density)
         self.branch_tropism = tuple(float(value) for value in branch_tropism)
         self.branch_tropism_strength = float(branch_tropism_strength)
         self.minimum_radius = float(minimum_radius)
@@ -282,6 +288,8 @@ class TreeConfig(object):
             raise ValueError("angle_jitter cannot be negative")
         if not 0.0 <= self.length_jitter < 1.0:
             raise ValueError("length_jitter must be in [0, 1)")
+        if not 0.0 <= self.internode_branch_density <= 1.0:
+            raise ValueError("internode_branch_density must be in [0, 1]")
         if not 0.0 <= self.branch_tropism_strength <= 1.0:
             raise ValueError("branch_tropism_strength must be in [0, 1]")
         if self.minimum_radius <= 0.0:
@@ -521,6 +529,33 @@ BRANCH_GROUPS_BY_PRESET = {
 }
 
 
+INTERNODE_GROUP_BY_PRESET = {
+    "broadleaf_round": "[+&X]",
+    "conifer_pyramidal": "[+&X]",
+    "willow_weeping": "[&+X]",
+    "columnar_poplar": "[+^X]",
+}
+
+
+def _add_internode_branch_site(replacement, module, iteration, seed,
+                               config_density, preset_key):
+    """Add a recursive lateral bud between F segments at stable random sites.
+
+    Existing X rules control branching at growth points.  This separate rule
+    adds branching opportunities along internodes, so density can increase
+    without merely increasing the number of children at each X.
+    """
+    if config_density <= 0.0 or not replacement:
+        return replacement
+    if stable_unit(seed, module.path_id, "internode-density:{}".format(iteration)) > config_density:
+        return replacement
+    group = INTERNODE_GROUP_BY_PRESET.get(
+        preset_key, INTERNODE_GROUP_BY_PRESET["broadleaf_round"]
+    )
+    insert_at = 1 if replacement.startswith("FF") else 0
+    return replacement[:insert_at] + group + replacement[insert_at:]
+
+
 def _top_level_branch_spans(successor):
     spans = []
     depth = 0
@@ -586,6 +621,7 @@ def expand_lsystem(
     seed,
     max_symbols,
     branches_per_node=None,
+    internode_branch_density=0.0,
     preset_key="broadleaf_round",
 ):
     modules = expand_lsystem_modules(
@@ -595,6 +631,7 @@ def expand_lsystem(
         seed,
         max_symbols,
         branches_per_node=branches_per_node,
+        internode_branch_density=internode_branch_density,
         preset_key=preset_key,
     )
     return "".join(module.name for module in modules)
@@ -607,6 +644,7 @@ def expand_lsystem_modules(
     seed,
     max_symbols,
     branches_per_node=None,
+    internode_branch_density=0.0,
     preset_key="broadleaf_round",
 ):
     """Expand into identity-carrying modules using path-stable randomness."""
@@ -628,6 +666,15 @@ def expand_lsystem_modules(
                 replacement = _rewrite_successor_branch_count(
                     replacement,
                     branches_per_node,
+                    preset_key,
+                )
+            if symbol == "F" and iteration < iterations - 1:
+                replacement = _add_internode_branch_site(
+                    replacement,
+                    module,
+                    iteration,
+                    seed,
+                    internode_branch_density,
                     preset_key,
                 )
             pieces.extend(
@@ -837,6 +884,7 @@ def generate_tree(config=None):
         seed=config.seed,
         max_symbols=config.max_symbols,
         branches_per_node=config.branches_per_node,
+        internode_branch_density=config.internode_branch_density,
         preset_key=config.preset_key,
     )
     expanded = "".join(module.name for module in modules)
