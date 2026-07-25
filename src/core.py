@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Pure-Python L-System and 3D turtle implementation.
 
 The output is a topological branch graph, independent of Maya.  Maya-specific
@@ -8,19 +9,18 @@ from __future__ import division, print_function
 
 import math
 import random
-import hashlib
-import binascii
 
-
-EPSILON = 1.0e-9
-
-
-def stable_unit(seed, identity, channel="default"):
-    """Return a stable pseudo-random value without consuming global RNG state."""
-    payload = "{}|{}|{}".format(int(seed), identity, channel).encode("utf-8")
-    digest = hashlib.sha256(payload).digest()
-    integer = int(binascii.hexlify(digest[:8]), 16)
-    return integer / float((1 << 64) - 1)
+from .math_utils import (
+    EPSILON,
+    stable_unit,
+    add as _add,
+    sub as _sub,
+    mul as _mul,
+    dot as _dot,
+    cross as _cross,
+    length as _length,
+    normalize_strict as _normalize,
+)
 
 
 class LModule(object):
@@ -35,41 +35,6 @@ class LModule(object):
 
     def __str__(self):
         return self.name
-
-
-def _add(a, b):
-    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
-
-
-def _sub(a, b):
-    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
-
-
-def _mul(vector, scalar):
-    return tuple(component * scalar for component in vector)
-
-
-def _dot(a, b):
-    return sum(a[index] * b[index] for index in range(3))
-
-
-def _cross(a, b):
-    return (
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    )
-
-
-def _length(vector):
-    return math.sqrt(_dot(vector, vector))
-
-
-def _normalize(vector):
-    magnitude = _length(vector)
-    if magnitude <= EPSILON:
-        raise ValueError("Cannot normalize a zero-length vector")
-    return _mul(vector, 1.0 / magnitude)
 
 
 def _rotate(vector, axis, radians):
@@ -95,8 +60,8 @@ class TreePreset(object):
 PRESETS = (
     TreePreset(
         key="broadleaf_round",
-        label="圆冠阔叶",
-        description="分枝展开、树冠饱满，接近常见阔叶乔木轮廓。",
+        label="Broadleaf Round",
+        description="Spreading branches and a full crown, resembling a common broadleaf tree silhouette.",
         defaults={
             "trunk_radius": 0.55,
             "branch_levels": 4,
@@ -123,8 +88,8 @@ PRESETS = (
     ),
     TreePreset(
         key="conifer_pyramidal",
-        label="塔形针叶",
-        description="中心主轴明显、轮生侧枝较多，形成上窄下宽的塔形轮廓。",
+        label="Conifer Pyramidal",
+        description="Clear central axis with many whorled side branches, forming a tapered pyramidal silhouette.",
         defaults={
             "trunk_radius": 0.48,
             "branch_levels": 5,
@@ -150,8 +115,8 @@ PRESETS = (
     ),
     TreePreset(
         key="willow_weeping",
-        label="垂柳形",
-        description="主干向上、侧枝较长并逐渐下垂，形成垂枝轮廓。",
+        label="Weeping Willow",
+        description="Trunk grows upward while long side branches gradually droop, forming a weeping silhouette.",
         defaults={
             "trunk_radius": 0.52,
             "branch_levels": 5,
@@ -177,8 +142,8 @@ PRESETS = (
     ),
     TreePreset(
         key="columnar_poplar",
-        label="窄冠杨树",
-        description="分支角小、枝条向上聚拢，形成狭长柱状树冠。",
+        label="Columnar Poplar",
+        description="Small branch angles and upward-converging branches form a narrow columnar crown.",
         defaults={
             "trunk_radius": 0.44,
             "branch_levels": 5,
@@ -206,10 +171,21 @@ PRESETS = (
 
 
 def list_presets():
+    """Return all available tree presets (broadleaf, conifer, willow, poplar).
+
+    Returns:
+        tuple[TreePreset]: Immutable tuple of all registered presets.
+    """
     return PRESETS
 
 
 def get_preset(key):
+    """Return the tree preset with the given key.
+
+    Parameters:
+        key (str): Preset identifier (e.g. "broadleaf_round",
+            "conifer_pyramidal", "willow_weeping", "columnar_poplar").
+    """
     for preset in PRESETS:
         if preset.key == key:
             return preset
@@ -624,6 +600,20 @@ def expand_lsystem(
     internode_branch_density=0.0,
     preset_key="broadleaf_round",
 ):
+    """Expand an L-System axiom into a flat symbol string.
+
+    Parameters:
+        axiom (str): Start symbol (typically "X").
+        rules (dict[str, tuple]): Map from symbol to weighted alternatives,
+            e.g. ``{"X": ((0.5, "F[+X]"), (0.5, "F[-X]"))}``.
+        iterations (int): Number of derivation passes (== branch_levels).
+        seed (int): Reproducible seed for path-stable randomness.
+        max_symbols (int): Hard cap on total symbol count to prevent
+            runaway expansion.
+        branches_per_node (int|None): If set, resize each X successor's
+            top-level lateral branch group to this count.
+        preset_key (str): Tree preset key used for branch group selection.
+    """
     modules = expand_lsystem_modules(
         axiom,
         rules,
@@ -647,7 +637,17 @@ def expand_lsystem_modules(
     internode_branch_density=0.0,
     preset_key="broadleaf_round",
 ):
-    """Expand into identity-carrying modules using path-stable randomness."""
+    """Expand into identity-carrying modules using path-stable randomness.
+
+    Parameters:
+        axiom (str): Start symbol (typically "X").
+        rules (dict[str, tuple]): Weighted alternatives per symbol.
+        iterations (int): Derivation passes (= branch_levels).
+        seed (int): Reproducible seed feeding ``stable_unit``.
+        max_symbols (int): Hard cap; raises ValueError if exceeded.
+        branches_per_node (int|None): Resize top-level branch groups.
+        preset_key (str): Tree preset key for branch group candidates.
+    """
     current = [LModule(symbol, path_id="a{}".format(index)) for index, symbol in enumerate(str(axiom))]
     for iteration in range(iterations):
         pieces = []
@@ -722,6 +722,18 @@ def _apply_branch_tropism(state, config):
 
 
 def interpret_lsystem(symbols, config):
+    """Interpret an L-System symbol string as a 3D branch graph.
+
+    Walks the symbol stream with a turtle state machine.  ``F`` emits a
+    BranchSegment, ``[``/``]`` push/pop the turtle stack, ``+ - & ^ \\ /``
+    rotate around heading/left/up axes, ``!`` shrinks the radius.
+
+    Parameters:
+        symbols (str|list): Symbol string or list of LModule objects.
+        config (TreeConfig): Provides branch_angle, segment_length,
+            length_decay, branch_radius_ratio, segment_taper, jitter
+            strengths and tropism vector.
+    """
     state = _TurtleState(radius=config.trunk_radius)
     stack = []
     segments = []
@@ -858,25 +870,58 @@ def _apply_pipe_model(segments, config, exponent=2.3):
         )
 
 
+_GOLDEN_ANGLE = 2.0 * math.pi * (1.0 - (math.sqrt(5.0) - 1.0) / 2.0)  # ~137.5 degrees
+
+
 def build_attachment_points(segments, tips, config, samples_per_segment=3):
-    """Derive persistent leaf/flower sockets from the interpreted branch graph."""
+    """Derive persistent leaf/flower sockets from the interpreted branch graph.
+
+    Leaf sockets follow a phyllotaxis (golden-angle spiral) around each
+    branch segment so that leaves are distributed naturally around the
+    circumference instead of clustering on one side.  The ``normal`` of
+    each socket points radially outward from the branch axis at a rotation
+    of ``sample_index * golden_angle``, and the ``binormal`` is rotated
+    consistently to preserve the orthonormal frame.
+
+    Parameters:
+        segments (list[BranchSegment]): Branch segments from
+            ``interpret_lsystem``.
+        tips (list[GrowthTip]): Branch tips (growth endpoints).
+        config (TreeConfig): Provides seed for deterministic socket ids.
+        samples_per_segment (int): Leaf sockets per eligible segment.
+    """
     if not segments:
         return []
     maximum_depth = max(segment.depth for segment in segments)
-    minimum_depth = max(0, maximum_depth - 3)
+    # Never place leaf sockets on the trunk (depth 0); leaves and flowers
+    # should only grow on branches, not on the main trunk.
+    minimum_depth = max(1, maximum_depth - 3)
     points = []
     for segment in segments:
         if segment.depth < minimum_depth:
             continue
+        # Internode shortening: terminal branches (high depth) have
+        # shortened internodes so leaves cluster toward the tip  - 
+        # mimics real woody plants' short shoots (brachyblasts).
+        # A power curve with exponent < 1 pushes samples toward amount=1.
+        depth_ratio = segment.depth / float(maximum_depth or 1)
+        cluster_power = 1.0 - 0.45 * depth_ratio  # 1.0 at base, 0.55 at tip
         for sample_index in range(samples_per_segment):
-            amount = (sample_index + 1.0) / (samples_per_segment + 1.0)
+            raw_amount = (sample_index + 1.0) / (samples_per_segment + 1.0)
+            amount = raw_amount ** cluster_power
             identity = "leaf:{}:{}".format(segment.path_id, sample_index)
             position = _add(segment.start, _mul(_sub(segment.end, segment.start), amount))
             exposure = 0.55 + 0.45 * (segment.depth / float(maximum_depth or 1))
+            # Rotate the socket normal around the branch heading using the
+            # golden-angle spiral so successive samples are distributed
+            # around the circumference (phyllotaxis), not stacked on one side.
+            angle = sample_index * _GOLDEN_ANGLE
+            rotated_normal = _rotate(segment.up, segment.heading, angle)
+            rotated_binormal = _rotate(segment.left, segment.heading, angle)
             points.append(
                 AttachmentPoint(
                     identity, "leaf", segment.index, amount, position,
-                    segment.heading, segment.up, segment.left, segment.depth,
+                    segment.heading, rotated_normal, rotated_binormal, segment.depth,
                     exposure, int(stable_unit(config.seed, identity, "socket") * 2147483647),
                 )
             )
@@ -899,6 +944,12 @@ def build_attachment_points(segments, tips, config, samples_per_segment=3):
 
 
 def generate_tree(config=None):
+    """Generate a complete tree model from the given configuration.
+
+    Parameters:
+        config (TreeConfig|None): Full generation config.  Defaults to
+            ``TreeConfig.from_preset("broadleaf_round")``.
+    """
     config = config or TreeConfig.from_preset("broadleaf_round")
     preset = get_preset(config.preset_key)
     modules = expand_lsystem_modules(

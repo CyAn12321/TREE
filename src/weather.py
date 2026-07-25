@@ -95,7 +95,17 @@ def _combined_bounds(tree_model, foliage_model=None):
 
 
 def build_weather_plan(tree_model, foliage_model=None, config=None):
-    """Map normalized UI strengths to bounded Maya scene parameters."""
+    """Map normalized UI strengths to bounded Maya scene parameters.
+
+    Parameters:
+        tree_model (TreeModel): Tree used to derive scene bounds and
+            ground height.
+        foliage_model (FoliageModel|None): Foliage model used to size
+            falling-leaf / falling-flower particle pools.  None means
+            no organ-fall animation.
+        config (WeatherConfig|None): Weather configuration.  Defaults to
+            ``WeatherConfig(seed=tree_model.config.seed + 211)``.
+    """
     config = config or WeatherConfig(seed=tree_model.config.seed + 211)
     minimum, maximum = _combined_bounds(tree_model, foliage_model)
     tree_minimum, unused_tree_maximum = tree_model.bounds()

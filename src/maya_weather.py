@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Maya-native weather using deformers, particles, fields and instancers.
 
 This is the original interactive mode: Maya evaluates the animation directly
@@ -17,8 +18,11 @@ from .weather import WeatherConfig, build_weather_plan
 def _maya_cmds():
     try:
         import maya.cmds as cmds
-    except ImportError as error:
-        raise RuntimeError("Weather animation must be created inside Maya") from error
+    except ImportError:
+        # ``raise X from Y`` is Python 3+ syntax  -  Maya's Python 2.7
+        # raises SyntaxError at import ("parse error").  Plain raise is
+        # the 2.7-compatible form.
+        raise RuntimeError("Weather animation must be created inside Maya")
     return cmds
 
 
@@ -38,9 +42,19 @@ def _set_string_attr(cmds, node, attr, value):
     cmds.setAttr(node + "." + attr, value, type="string")
 
 
-def _material(cmds, name, color, transparency=0.0):
+def _weather_material(cmds, name, color, transparency=0.0):
+    """Lambert material with explicit transparency for weather particles.
+
+    Distinct from maya_foliage._material (which uses a translucent=True/False
+    flag for the petal SSS approximation).  Weather effects need a continuous
+    0..1 transparency range  -  rain streaks ~0.18, snow ~0.02, full snow
+    cover ~1.0  -  so a float parameter is the right interface here.
+    """
     material = cmds.shadingNode("lambert", asShader=True, name=name)
-    cmds.setAttr(material + ".color", *color, type="double3")
+    # Explicit color channels instead of *color unpacking  -  *args
+    # followed by a keyword arg is PEP 448 (Python 3.5+) only and
+    # raises SyntaxError on Maya's Python 2.7.
+    cmds.setAttr(material + ".color", color[0], color[1], color[2], type="double3")
     cmds.setAttr(material + ".diffuse", 0.88)
     cmds.setAttr(
         material + ".transparency",
@@ -107,15 +121,37 @@ def _create_wind(cmds, targets, plan, group, name):
 
     frequency = plan["wind_frequency"]
     amplitude = plan["wind_curvature"]
-    expression = cmds.expression(
-        name=name + "_WindExpression",
-        alwaysEvaluate=True,
-        unitConversion="all",
-        string=(
-            "{0}.curvature = {1:.8f} * "
-            "(sin(frame * {2:.8f}) + 0.32 * sin(frame * {3:.8f} + 1.7));"
-        ).format(deformer, amplitude, frequency, frequency * 2.31),
-    )
+    expression_name = name + "_WindExpression"
+    # Delete any leftover expression node with the same name before
+    # creating a fresh one.  ``delete_weather_nodes`` may fail to remove
+    # the old expression (locked node, batch-delete aborted, etc.) and
+    # ``cmds.expression(name=...)`` on an existing node tries to UPDATE
+    # its body  -  which makes Maya re-parse the stale expression string
+    # that references the now-deleted bend deformer, raising the
+    # "parse error / 解析错误" users see on season switch.  Removing the
+    # old node first forces a clean create.
+    if cmds.objExists(expression_name):
+        try:
+            cmds.delete(expression_name)
+        except RuntimeError:
+            pass
+    expression_body = (
+        "{0}.curvature = {1:.8f} * "
+        "(sin(frame * {2:.8f}) + 0.32 * sin(frame * {3:.8f} + 1.7));"
+    ).format(deformer, amplitude, frequency, frequency * 2.31)
+    try:
+        expression = cmds.expression(
+            name=expression_name,
+            alwaysEvaluate=True,
+            unitConversion="all",
+            string=expression_body,
+        )
+    except RuntimeError:
+        # Expression creation failed  -  the deformer will still bend
+        # the branches at its rest curvature (0.0), so the wind effect
+        # is simply static.  This is a cosmetic degradation, not a
+        # fatal error  -  the tree and foliage are already built.
+        return [deformer, handle]
     return [deformer, handle, expression]
 
 
@@ -262,7 +298,7 @@ def _create_rain(cmds, tree_result, plan, group, name):
     cmds.parent(particles, group)
     _safe_set(cmds, shape + ".tailSize", 0.42)
     _safe_set(cmds, shape + ".lineWidth", 1.15)
-    material, shading_group = _material(
+    material, shading_group = _weather_material(
         cmds,
         name + "_Rain_MAT",
         (0.28, 0.58, 0.92),
@@ -300,7 +336,7 @@ def _create_snow(cmds, tree_result, plan, group, name):
     )
     cmds.parent(particles, group)
     _safe_set(cmds, shape + ".radius", max(0.025, plan["height"] * 0.0028))
-    material, shading_group = _material(
+    material, shading_group = _weather_material(
         cmds,
         name + "_Snow_MAT",
         (0.96, 0.98, 1.0),
@@ -350,7 +386,7 @@ def _create_snow_cover(cmds, tree_result, plan, group, name):
         worldSpace=True,
         pivots=(center[0], plan["ground_y"], center[2]),
     )
-    material, shading_group = _material(
+    material, shading_group = _weather_material(
         cmds,
         name + "_SnowCover_MAT",
         (0.94, 0.97, 1.0),
@@ -549,13 +585,39 @@ def delete_weather_nodes(root):
             node for node in set(nodes)
             if cmds.objExists(node) and not str(node).startswith(str(group) + "|")
         ]
-        if outside_group:
+        # Per-node deletion (not batch).  ``cmds.delete(list)`` is not
+        # atomic  -  a single locked node aborts the whole call and the
+        # old ``except RuntimeError: pass`` swallowed the failure, leaving
+        # expression / deformer / particle nodes behind.  On the next
+        # season switch ``cmds.expression(name=...)` collided with the
+        # leftover expression node and Maya's expression parser raised
+        # "parse error" while trying to update the stale expression body
+        # (which referenced an already-deleted bend deformer).
+        for node in outside_group:
             try:
-                cmds.delete(outside_group)
+                if cmds.objExists(node):
+                    cmds.delete(node)
             except RuntimeError:
                 pass
         if cmds.objExists(group):
             cmds.delete(group)
+    # Fallback: search for orphaned wind expression nodes by name
+    # pattern.  If ``_register_managed_nodes`` failed to connect the
+    # expression to the group (silent ``except RuntimeError: pass``),
+    # the expression survives the loop above and remains in the scene
+    # referencing a deleted deformer  -  Maya's expression parser
+    # raises "parse error / 解析错误" every time it evaluates.
+    #
+    # Search for ALL ``*_WindExpression`` nodes in the scene, not just
+    # the current tree name.  Orphaned expressions from a previous
+    # Maya session (where the tree root was deleted outside the tool)
+    # have a different tree name and would be missed by the targeted
+    # ``tree_name + "_WindExpression"`` lookup.
+    for expr in cmds.ls("*_WindExpression", type="expression") or []:
+        try:
+            cmds.delete(expr)
+        except RuntimeError:
+            pass
 
 
 def create_weather_in_maya(
@@ -564,6 +626,19 @@ def create_weather_in_maya(
     config=None,
     name="LSystemTree",
 ):
+    """Build Maya-native wind/rain/snow/snow-cover/falling-organ animation.
+
+    Parameters:
+        tree_result (dict): Output of ``create_tree_in_maya``  -  must
+            provide ``root``, ``mesh`` and ``model``.
+        foliage_result (dict|None): Output of ``create_foliage_in_maya``
+            for falling-leaf/falling-flower particle sources.  None
+            skips organ-fall animation.
+        config (WeatherConfig|None): Weather configuration.  Defaults to
+            ``WeatherConfig(seed=tree_model.config.seed + 211)``.
+        name (str): Maya node name prefix for the weather group and
+            child particle/emitter nodes.
+    """
     cmds = _maya_cmds()
     tree_model = tree_result["model"]
     foliage_model = foliage_result.get("model") if foliage_result else None

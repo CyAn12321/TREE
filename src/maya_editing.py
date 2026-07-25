@@ -36,26 +36,51 @@ def _config_payload(config):
 
 
 def config_to_json(config):
+    """Serialize a config object to a sorted JSON string.
+
+    Parameters:
+        config (TreeConfig|FoliageConfig|WeatherConfig): Object with
+            ``as_dict()`` or ``__dict__``.
+    """
     return json.dumps(_config_payload(config), sort_keys=True)
 
 
 def tree_config_from_json(text):
+    """Reconstruct a TreeConfig from its JSON serialization.
+
+    Parameters:
+        text (str): JSON output of ``config_to_json``.
+    """
     return core.TreeConfig(**json.loads(text))
 
 
 def foliage_config_from_json(text):
+    """Reconstruct a FoliageConfig from its JSON serialization.
+
+    Parameters:
+        text (str): JSON output of ``config_to_json``.
+    """
     return foliage.FoliageConfig(**json.loads(text))
 
 
 def weather_config_from_json(text):
+    """Reconstruct a WeatherConfig from its JSON serialization.
+
+    Parameters:
+        text (str): JSON output of ``config_to_json``.
+    """
     return weather.WeatherConfig(**json.loads(text))
 
 
 def _maya_cmds():
     try:
         import maya.cmds as cmds
-    except ImportError as error:
-        raise RuntimeError("Editable tree operations must run inside Maya") from error
+    except ImportError:
+        # ``raise X from Y`` is Python 3+ syntax  -  on Maya's Python 2.7
+        # it raises SyntaxError at import time ("parse error"), which is
+        # exactly the parse error users see when switching seasons.
+        # Use the Python 2.7-compatible plain raise form.
+        raise RuntimeError("Editable tree operations must run inside Maya")
     return cmds
 
 
@@ -105,6 +130,11 @@ def _children_with_marker(cmds, root, marker):
 
 
 def ensure_user_overrides_group(root):
+    """Return the user-owned override group under ``root``, creating it if needed.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+    """
     cmds = _maya_cmds()
     existing = _children_with_marker(cmds, root, USER_GROUP_MARKER)
     if existing:
@@ -116,6 +146,14 @@ def ensure_user_overrides_group(root):
 
 
 def store_tree_settings(root, tree_config, radial_sides=8, create_tip_locators=False):
+    """Persist tree generation parameters as attributes on ``root``.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+        tree_config (TreeConfig): Tree parameters to serialize.
+        radial_sides (int): Cross-section vertex count to remember.
+        create_tip_locators (bool): Whether tip locators are enabled.
+    """
     cmds = _maya_cmds()
     _set_bool_attr(cmds, root, TREE_MARKER, True)
     _set_string_attr(cmds, root, TREE_CONFIG_ATTR, config_to_json(tree_config))
@@ -125,16 +163,33 @@ def store_tree_settings(root, tree_config, radial_sides=8, create_tip_locators=F
 
 
 def store_foliage_settings(root, foliage_config):
+    """Persist foliage parameters as a JSON attribute on ``root``.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+        foliage_config (FoliageConfig): Foliage parameters to serialize.
+    """
     cmds = _maya_cmds()
     _set_string_attr(cmds, root, FOLIAGE_CONFIG_ATTR, config_to_json(foliage_config))
 
 
 def store_weather_settings(root, weather_config):
+    """Persist weather parameters as a JSON attribute on ``root``.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+        weather_config (WeatherConfig): Weather parameters to serialize.
+    """
     cmds = _maya_cmds()
     _set_string_attr(cmds, root, WEATHER_CONFIG_ATTR, config_to_json(weather_config))
 
 
 def get_tree_config(root):
+    """Reconstruct a TreeConfig from the JSON attribute on ``root``.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+    """
     cmds = _maya_cmds()
     text = _get_string_attr(cmds, root, TREE_CONFIG_ATTR)
     if not text:
@@ -143,18 +198,34 @@ def get_tree_config(root):
 
 
 def get_foliage_config(root):
+    """Reconstruct a FoliageConfig from the JSON attribute on ``root``.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+    """
     cmds = _maya_cmds()
     text = _get_string_attr(cmds, root, FOLIAGE_CONFIG_ATTR)
     return foliage_config_from_json(text) if text else None
 
 
 def get_weather_config(root):
+    """Reconstruct a WeatherConfig from the JSON attribute on ``root``.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+    """
     cmds = _maya_cmds()
     text = _get_string_attr(cmds, root, WEATHER_CONFIG_ATTR)
     return weather_config_from_json(text) if text else None
 
 
 def get_radial_sides(root, default=8):
+    """Read the stored radial_sides attribute from ``root``.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+        default (int): Fallback value when the attribute is missing.
+    """
     cmds = _maya_cmds()
     if cmds.attributeQuery(RADIAL_SIDES_ATTR, node=root, exists=True):
         return int(cmds.getAttr(root + "." + RADIAL_SIDES_ATTR))
@@ -162,6 +233,11 @@ def get_radial_sides(root, default=8):
 
 
 def get_tip_locator_flag(root):
+    """Read the stored createTipLocators attribute from ``root``.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+    """
     cmds = _maya_cmds()
     if cmds.attributeQuery(TIP_LOCATORS_ATTR, node=root, exists=True):
         return bool(cmds.getAttr(root + "." + TIP_LOCATORS_ATTR))
@@ -169,6 +245,12 @@ def get_tip_locator_flag(root):
 
 
 def find_tree_root_from_selection(fallback_root=None):
+    """Walk up from the current selection to find an editable tree root.
+
+    Parameters:
+        fallback_root (str|None): Node path appended to the candidate
+            list when no editable ancestor is found in the selection.
+    """
     cmds = _maya_cmds()
     candidates = cmds.ls(selection=True, long=True) or []
     if fallback_root and cmds.objExists(fallback_root):
@@ -189,9 +271,103 @@ def _delete_children_with_marker(cmds, root, marker):
             cmds.delete(child)
 
 
+def _delete_foliage_shading_nodes(cmds, root):
+    """Delete orphaned shading nodes left by previous foliage builds.
+
+    ``create_foliage_in_maya`` creates lambert / file / bump2d /
+    condition / samplerInfo / place2dTexture nodes whose names follow
+    fixed patterns.  These nodes are NOT parented under the foliage
+    group, so ``_delete_children_with_marker`` does not remove them.
+    Without this cleanup every season switch accumulates a new set of
+    shading nodes  -  after 3-4 switches the dependency graph becomes
+    unstable and Maya crashes (typically on the winter->spring
+    transition where flower prototype materials are reactivated).
+    """
+    tree_name = root.split("|")[-1]
+    # Patterns cover: leaf materials (per-season), flower materials
+    # (per-season), flower-center materials (per-season), and woody
+    # flower prototype materials (per-tree, shared across seasons).
+    patterns = [
+        "LSystemLeaf_*",
+        "LSystemFlower_*",
+        "LSystemFlowerCenter_*",
+        # Prototype materials now include season_key:
+        # ``{tree}_{season}_FlowerProto_{color}_*``
+        "{}_*_FlowerProto_*".format(tree_name),
+    ]
+    nodes_to_delete = []
+    for pattern in patterns:
+        matched = cmds.ls(pattern) or []
+        for node in matched:
+            if cmds.objExists(node):
+                nodes_to_delete.append(node)
+    # Also catch the associated utility nodes (condition, samplerInfo,
+    # file, bump2d, place2dTexture) whose names derive from the
+    # material names above.
+    utility_patterns = [
+        "LSystemLeaf_*_FaceSwitch",
+        "LSystemLeaf_*_Sampler",
+        "LSystemLeaf_*VeinFile*",
+        "LSystemLeaf_*VeinBump",
+        "{}_*_FlowerProto_*VeinFile*".format(tree_name),
+        "{}_*_FlowerProto_*VeinBump".format(tree_name),
+    ]
+    for pattern in utility_patterns:
+        matched = cmds.ls(pattern) or []
+        for node in matched:
+            if cmds.objExists(node):
+                nodes_to_delete.append(node)
+    # Delete nodes ONE BY ONE instead of batch-deleting.  ``cmds.delete``
+    # on a list is NOT atomic  -  if node N fails to delete (locked,
+    # still referenced, etc.), nodes N+1..end are never reached and the
+    # whole call raises RuntimeError, which the previous ``except: pass``
+    # silently swallowed.  The leftover nodes then collided with the
+    # next season's freshly-created materials (wrong colors, "attribute
+    # already connected", parse errors).  Per-node deletion with
+    # individual try/except ensures every node gets attempted even when
+    # one fails, and survivors are explicitly logged so the failure is
+    # visible in the script editor instead of being hidden.
+    unique_nodes = []
+    seen = set()
+    for node in nodes_to_delete:
+        if node not in seen:
+            seen.add(node)
+            unique_nodes.append(node)
+    survivors = []
+    for node in unique_nodes:
+        try:
+            if cmds.objExists(node):
+                cmds.delete(node)
+        except RuntimeError:
+            survivors.append(node)
+    # Survivors (nodes that could not be removed) are silently ignored;
+    # the next build will retry deletion.
+
+
 def delete_foliage_nodes(root):
+    """Delete the foliage group under ``root`` (managed by ``FOLIAGE_MARKER``).
+
+    Also cleans up the orphaned shading nodes (lambert / file / bump2d
+    / condition / samplerInfo / place2dTexture) created for the foliage
+    so that repeated season switches do not accumulate dependency-graph
+    nodes and destabilise Maya.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+    """
     cmds = _maya_cmds()
+    # Order matters: delete the foliage MESHES first so the shading
+    # nodes are no longer referenced by any geometry, THEN delete the
+    # shading nodes themselves.  The previous order (shading first,
+    # meshes second) left lambert/condition nodes still connected to
+    # live meshes, so ``cmds.delete`` refused to remove them, the
+    # ``except RuntimeError: pass`` in ``_delete_foliage_shading_nodes``
+    # swallowed the error, and the leftover nodes collided with the
+    # next season's freshly-created materials (wrong leaf colors,
+    # "attribute already connected" errors, parse errors from stale
+    # expression references).
     _delete_children_with_marker(cmds, root, FOLIAGE_MARKER)
+    _delete_foliage_shading_nodes(cmds, root)
 
 
 def _managed_branch_mesh(cmds, root):
@@ -267,6 +443,16 @@ def _foliage_result_from_root(root, tree_model):
 
 
 def regenerate_branches(root, tree_config, radial_sides=None, create_tip_locators=None):
+    """Rebuild the branch mesh (and tips) under ``root`` while keeping user overrides.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+        tree_config (TreeConfig): New tree configuration to apply.
+        radial_sides (int|None): Cross-section vertex count.  None reads
+            the previously stored value from ``root``.
+        create_tip_locators (bool|None): Tip-locator toggle.  None reads
+            the previously stored value from ``root``.
+    """
     cmds = _maya_cmds()
     radial_sides = get_radial_sides(root) if radial_sides is None else radial_sides
     if create_tip_locators is None:
@@ -299,6 +485,12 @@ def regenerate_branches(root, tree_config, radial_sides=None, create_tip_locator
 
 
 def refresh_foliage(root, foliage_config):
+    """Rebuild the foliage layer under ``root`` while keeping user overrides.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+        foliage_config (FoliageConfig): New foliage configuration.
+    """
     tree_result = _tree_result_from_root(root)
     maya_weather.delete_weather_nodes(root)
     delete_foliage_nodes(root)
@@ -313,6 +505,12 @@ def refresh_foliage(root, foliage_config):
 
 
 def refresh_weather(root, weather_config):
+    """Rebuild the weather animation under ``root`` while keeping user overrides.
+
+    Parameters:
+        root (str): Maya transform of the editable tree root.
+        weather_config (WeatherConfig): New weather configuration.
+    """
     tree_result = _tree_result_from_root(root)
     foliage_result = _foliage_result_from_root(root, tree_result["model"])
     result = maya_weather.create_weather_in_maya(
@@ -323,3 +521,122 @@ def refresh_weather(root, weather_config):
     )
     store_weather_settings(root, weather_config)
     return result
+
+
+# Patterns for ALL LSystem-related DG nodes (shading nodes, utility nodes,
+# expression nodes).  Used by ``cleanup_orphaned_lsystem_nodes`` to sweep
+# the entire scene  -  not scoped to a specific tree root  -  so that
+# orphaned nodes from a previous Maya session (where ``last_root`` was
+# lost) are removed before a fresh generation.  Without this sweep, a
+# leftover ``*_WindExpression`` referencing a deleted bend deformer
+# raises "parse error" every time Maya evaluates the DG (which happens
+# on every ``connectAttr`` / ``setAttr``), and the RuntimeError it
+# propagates is silently swallowed by ``except RuntimeError: pass`` in
+# ``_material_two_sided_leaf``, leaving the condition node's
+# ``colorIfTrue`` / ``colorIfFalse`` at default black  -  the user sees
+# "no color" on the leaves.
+_ORPHAN_SHADING_PATTERNS = (
+    # Leaf / flower / flower-center lambert materials (per-season).
+    "LSystemLeaf_*",
+    "LSystemFlower_*",
+    "LSystemFlowerCenter_*",
+    # Woody flower prototype materials (per-tree, shared across seasons).
+    "LSystemTree_*_FlowerProto_*",
+    # Two-sided leaf condition + samplerInfo nodes.
+    "LSystemLeaf_*_FaceSwitch",
+    "LSystemLeaf_*_Sampler",
+    # Vein bump-mapping utility nodes (leaves and flower petals).
+    "LSystemLeaf_*VeinFile*",
+    "LSystemLeaf_*VeinBump",
+    "LSystemTree_*_FlowerProto_*VeinFile*",
+    "LSystemTree_*_FlowerProto_*VeinBump",
+    # place2dTexture companions for the vein file nodes.
+    "LSystemLeaf_*VeinFile*Place",
+    "LSystemTree_*_FlowerProto_*VeinFile*Place",
+    # Bark material (shared, singleton).
+    "LSystemTree_Bark_MAT",
+    "LSystemTree_Bark_MATSG",
+)
+
+_ORPHAN_EXPRESSION_PATTERNS = (
+    "*_WindExpression",
+)
+
+
+def _collect_nodes_by_pattern(cmds, patterns):
+    """Gather all scene nodes matching any of the given glob patterns.
+
+    Parameters:
+        cmds: Maya cmds module.
+        patterns (tuple[str]): Glob patterns to match.
+
+    Returns:
+        list[str]: De-duplicated list of existing node names.
+    """
+    collected = []
+    seen = set()
+    for pattern in patterns:
+        for node in cmds.ls(pattern) or []:
+            if node not in seen and cmds.objExists(node):
+                seen.add(node)
+                collected.append(node)
+    return collected
+
+
+def cleanup_orphaned_lsystem_nodes(verbose=False):
+    """Remove ALL orphaned LSystem nodes from the scene.
+
+    Unlike ``delete_foliage_nodes`` and ``delete_weather_nodes``, this
+    function does NOT require a tree root  -  it sweeps the entire scene
+    by name pattern.  This is essential for the case where
+    ``TreeGeneratorUI.last_root`` is None (fresh Maya session, or after
+    a previous build failed and left orphaned DG nodes behind).  In that
+    state ``delete_last`` does nothing, and the orphaned wind expression
+    / condition / material nodes accumulate and collide with the new
+    build, causing "parse error" and "no color" symptoms.
+
+    Parameters:
+        verbose (bool): When True, print a summary of deleted / surviving
+            nodes to the returned dict so the caller can inspect what was cleaned up.
+
+    Returns:
+        dict: ``{"deleted": int, "survivors": list[str]}``  -  count of
+        nodes successfully removed and list of nodes that could not be
+        deleted (locked, referenced, etc.).
+    """
+    cmds = _maya_cmds()
+    # Delete expressions FIRST.  A leftover ``*_WindExpression`` that
+    # references a deleted bend deformer is the primary cause of the
+    # "parse error" messages: every DG evaluation (triggered by
+    # ``connectAttr`` / ``setAttr`` during foliage material setup) tries
+    # to re-evaluate the broken expression, and the parse failure raises
+    # RuntimeError in Python  -  which ``_material_two_sided_leaf``
+    # silently swallows, skipping the ``colorIfTrue`` / ``colorIfFalse``
+    # ``setAttr`` calls and leaving the condition node at default black.
+    # Removing the expression before building new materials eliminates
+    # the spurious DG errors entirely.
+    expression_nodes = _collect_nodes_by_pattern(cmds, _ORPHAN_EXPRESSION_PATTERNS)
+    shading_nodes = _collect_nodes_by_pattern(cmds, _ORPHAN_SHADING_PATTERNS)
+    # Also sweep any orphaned Weather groups (transform + contents).
+    weather_groups = cmds.ls("*_Weather", type="transform") or []
+    all_nodes = []
+    seen = set()
+    for node in expression_nodes + shading_nodes + weather_groups:
+        if node not in seen:
+            seen.add(node)
+            all_nodes.append(node)
+
+    deleted = 0
+    survivors = []
+    for node in all_nodes:
+        try:
+            if cmds.objExists(node):
+                cmds.delete(node)
+                deleted += 1
+        except RuntimeError:
+            survivors.append(node)
+
+    # Verbose logging removed; survivors are returned in the result dict
+    # for callers that need to inspect them.
+
+    return {"deleted": deleted, "survivors": survivors}
