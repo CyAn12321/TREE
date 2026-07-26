@@ -23,17 +23,32 @@ from .math_utils import (
 )
 
 
+# Algorithm provenance: the two-stage L-System derivation plus 3D turtle
+# interpretation follows the general method described by Prusinkiewicz and
+# Lindenmayer, *The Algorithmic Beauty of Plants*.  This module contains the
+# project's own implementation; no external source code is copied here.
+
+
 class LModule(object):
     """Typed L-System symbol carrying a persistent derivation identity."""
 
     __slots__ = ("name", "parameters", "path_id")
 
     def __init__(self, name, parameters=(), path_id="0"):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            name: Input value used by this function.
+            parameters: Input value used by this function.
+            path_id: Input value used by this function.
+        """
         self.name = str(name)
         self.parameters = tuple(parameters)
         self.path_id = str(path_id)
 
     def __str__(self):
+        """Return the readable string representation of this object.
+        """
         return self.name
 
 
@@ -50,6 +65,15 @@ def _rotate(vector, axis, radians):
 
 class TreePreset(object):
     def __init__(self, key, label, description, defaults, rules):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            key: Input value used by this function.
+            label: Input value used by this function.
+            description: Input value used by this function.
+            defaults: Input value used by this function.
+            rules: Input value used by this function.
+        """
         self.key = key
         self.label = label
         self.description = description
@@ -215,6 +239,27 @@ class TreeConfig(object):
         seed=17,
         max_symbols=180000,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            preset_key: Input value used by this function.
+            trunk_radius: Input value used by this function.
+            branch_levels: Input value used by this function.
+            branches_per_node: Input value used by this function.
+            branch_angle: Input value used by this function.
+            segment_length: Input value used by this function.
+            length_decay: Input value used by this function.
+            branch_radius_ratio: Input value used by this function.
+            segment_taper: Input value used by this function.
+            angle_jitter: Input value used by this function.
+            length_jitter: Input value used by this function.
+            internode_branch_density: Input value used by this function.
+            branch_tropism: Input value used by this function.
+            branch_tropism_strength: Input value used by this function.
+            minimum_radius: Input value used by this function.
+            seed: Input value used by this function.
+            max_symbols: Input value used by this function.
+        """
         self.preset_key = preset_key
         self.trunk_radius = float(trunk_radius)
         self.branch_levels = int(branch_levels)
@@ -236,6 +281,12 @@ class TreeConfig(object):
 
     @classmethod
     def from_preset(cls, preset_key, **overrides):
+        """Execute the from preset operation.
+
+        Parameters:
+            preset_key: Input value used by this function.
+            overrides: Input value used by this function.
+        """
         preset = get_preset(preset_key)
         values = dict(preset.defaults)
         values.update(overrides)
@@ -243,6 +294,8 @@ class TreeConfig(object):
         return cls(**values)
 
     def validate(self):
+        """Validate the current configuration and raise ValueError for invalid input.
+        """
         get_preset(self.preset_key)
         if self.trunk_radius <= 0.0:
             raise ValueError("trunk_radius must be positive")
@@ -275,6 +328,8 @@ class TreeConfig(object):
         _normalize(self.branch_tropism)
 
     def as_dict(self):
+        """Convert this object to dict.
+        """
         return dict(self.__dict__)
 
 
@@ -307,6 +362,21 @@ class BranchSegment(object):
         left=None,
         up=None,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            index: Input value used by this function.
+            parent_index: Input value used by this function.
+            depth: Input value used by this function.
+            start: Input value used by this function.
+            end: Input value used by this function.
+            start_radius: Input value used by this function.
+            end_radius: Input value used by this function.
+            path_id: Input value used by this function.
+            heading: Input value used by this function.
+            left: Input value used by this function.
+            up: Input value used by this function.
+        """
         self.index = index
         self.parent_index = parent_index
         self.depth = depth
@@ -324,6 +394,15 @@ class GrowthTip(object):
     __slots__ = ("position", "direction", "depth", "parent_segment", "path_id")
 
     def __init__(self, position, direction, depth, parent_segment, path_id=None):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            position: Input value used by this function.
+            direction: Input value used by this function.
+            depth: Input value used by this function.
+            parent_segment: Input value used by this function.
+            path_id: Input value used by this function.
+        """
         self.position = position
         self.direction = direction
         self.depth = depth
@@ -341,6 +420,21 @@ class AttachmentPoint(object):
 
     def __init__(self, identity, kind, segment_index, amount, position, tangent,
                  normal, binormal, depth, exposure, seed):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            identity: Input value used by this function.
+            kind: Input value used by this function.
+            segment_index: Input value used by this function.
+            amount: Input value used by this function.
+            position: Input value used by this function.
+            tangent: Input value used by this function.
+            normal: Input value used by this function.
+            binormal: Input value used by this function.
+            depth: Input value used by this function.
+            exposure: Input value used by this function.
+            seed: Input value used by this function.
+        """
         self.id = str(identity)
         self.kind = str(kind)
         self.segment_index = segment_index
@@ -356,6 +450,11 @@ class AttachmentPoint(object):
 
 class BranchGraph(object):
     def __init__(self, segments):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            segments: Input value used by this function.
+        """
         self.segments = segments
         self.children = dict((segment.index, []) for segment in segments)
         self.roots = []
@@ -366,12 +465,24 @@ class BranchGraph(object):
                 self.children[segment.parent_index].append(segment.index)
 
     def terminal_indices(self):
+        """Return terminal-branch information for the graph.
+        """
         return [index for index, children in self.children.items() if not children]
 
 
 class TreeModel(object):
     def __init__(self, config, expanded_string, segments, tips, modules=None,
                  attachment_points=None):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            config: Input value used by this function.
+            expanded_string: Input value used by this function.
+            segments: Input value used by this function.
+            tips: Input value used by this function.
+            modules: Input value used by this function.
+            attachment_points: Input value used by this function.
+        """
         self.config = config
         self.expanded_string = expanded_string
         self.segments = segments
@@ -381,6 +492,8 @@ class TreeModel(object):
         self.attachment_points = tuple(attachment_points or ())
 
     def bounds(self):
+        """Execute the bounds operation.
+        """
         points = []
         for segment in self.segments:
             points.extend((segment.start, segment.end))
@@ -389,6 +502,8 @@ class TreeModel(object):
         return minimum, maximum
 
     def maximum_depth(self):
+        """Return the maximum value represented by this object.
+        """
         return max(segment.depth for segment in self.segments)
 
 
@@ -413,6 +528,17 @@ class _TurtleState(object):
         depth=0,
         last_segment=None,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            position: Input value used by this function.
+            heading: Input value used by this function.
+            left: Input value used by this function.
+            up: Input value used by this function.
+            radius: Input value used by this function.
+            depth: Input value used by this function.
+            last_segment: Input value used by this function.
+        """
         self.position = position
         self.heading = heading
         self.left = left
@@ -422,6 +548,8 @@ class _TurtleState(object):
         self.last_segment = last_segment
 
     def copy(self):
+        """Return a copy of this object.
+        """
         return _TurtleState(
             self.position,
             self.heading,
@@ -433,6 +561,12 @@ class _TurtleState(object):
         )
 
     def rotate(self, axis, radians):
+        """Execute the rotate operation.
+
+        Parameters:
+            axis: Input value used by this function.
+            radians: Input value used by this function.
+        """
         self.heading = _normalize(_rotate(self.heading, axis, radians))
         self.left = _normalize(_rotate(self.left, axis, radians))
         self.up = _normalize(_cross(self.heading, self.left))
@@ -440,6 +574,12 @@ class _TurtleState(object):
 
 
 def _weighted_successor(options, rng):
+    """Internal helper for weighted successor.
+
+    Parameters:
+        options: Input value used by this function.
+        rng: Input value used by this function.
+    """
     if any(weight < 0.0 for weight, _ in options):
         raise ValueError("L-System rule weights cannot be negative")
     total = sum(weight for weight, _ in options)
@@ -455,6 +595,12 @@ def _weighted_successor(options, rng):
 
 
 def _weighted_successor_value(options, value):
+    """Internal helper for weighted successor value.
+
+    Parameters:
+        options: Input value used by this function.
+        value: Input value used by this function.
+    """
     if any(weight < 0.0 for weight, unused_successor in options):
         raise ValueError("L-System rule weights cannot be negative")
     total = sum(weight for weight, unused_successor in options)
@@ -533,6 +679,11 @@ def _add_internode_branch_site(replacement, module, iteration, seed,
 
 
 def _top_level_branch_spans(successor):
+    """Internal helper for top level branch spans.
+
+    Parameters:
+        successor: Input value used by this function.
+    """
     spans = []
     depth = 0
     start = None
@@ -697,6 +848,12 @@ def expand_lsystem_modules(
 
 
 def _apply_branch_tropism(state, config):
+    """Internal helper for apply branch tropism.
+
+    Parameters:
+        state: Input value used by this function.
+        config: Input value used by this function.
+    """
     if state.depth == 0 or config.branch_tropism_strength <= 0.0:
         return
     target = _normalize(config.branch_tropism)
@@ -740,6 +897,12 @@ def interpret_lsystem(symbols, config):
     tips = []
 
     def angle(module, sign=1.0):
+        """Return the angle represented by this vector or branch state.
+
+        Parameters:
+            module: Input value used by this function.
+            sign: Input value used by this function.
+        """
         jitter = stable_unit(config.seed, module.path_id, "angle") * 2.0 - 1.0
         degrees = config.branch_angle + jitter * config.angle_jitter
         return math.radians(degrees) * sign
@@ -828,6 +991,11 @@ def _apply_pipe_model(segments, config, exponent=2.3):
     loads = {}
 
     def terminal_load(index):
+        """Return terminal-branch information for the graph.
+
+        Parameters:
+            index: Input value used by this function.
+        """
         children = graph.children[index]
         loads[index] = 1.0 if not children else sum(terminal_load(child) for child in children)
         return loads[index]
@@ -901,7 +1069,7 @@ def build_attachment_points(segments, tips, config, samples_per_segment=3):
         if segment.depth < minimum_depth:
             continue
         # Internode shortening: terminal branches (high depth) have
-        # shortened internodes so leaves cluster toward the tip  - 
+        # shortened internodes so leaves cluster toward the tip  -
         # mimics real woody plants' short shoots (brachyblasts).
         # A power curve with exponent < 1 pushes samples toward amount=1.
         depth_ratio = segment.depth / float(maximum_depth or 1)

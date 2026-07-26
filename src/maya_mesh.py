@@ -93,6 +93,11 @@ def build_mesh_arrays(model, radial_sides=8, radius_rings=4):
 
 
 def _get_bark_shading_group(cmds):
+    """Internal helper for get bark shading group.
+
+    Parameters:
+        cmds: Input value used by this function.
+    """
     material = "LSystemTree_Bark_MAT"
     shading_group = material + "SG"
     if not cmds.objExists(material):
@@ -115,24 +120,55 @@ def _get_bark_shading_group(cmds):
 
 
 def _set_bool_attr(cmds, node, attr, value):
+    """Internal helper for set bool attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, attributeType="bool")
     cmds.setAttr(node + "." + attr, bool(value))
 
 
 def _set_long_attr(cmds, node, attr, value):
+    """Internal helper for set long attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, attributeType="long")
     cmds.setAttr(node + "." + attr, int(value))
 
 
 def _set_string_attr(cmds, node, attr, value):
+    """Internal helper for set string attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, dataType="string")
     cmds.setAttr(node + "." + attr, value, type="string")
 
 
 def _ensure_user_overrides_group(cmds, root, name):
+    """Internal helper for ensure user overrides group.
+
+    Parameters:
+        cmds: Input value used by this function.
+        root: Input value used by this function.
+        name: Input value used by this function.
+    """
     group = cmds.group(empty=True, name=name + "_User_Overrides", parent=root)
     _set_bool_attr(cmds, group, "lsystemUserOverrides", True)
     return group

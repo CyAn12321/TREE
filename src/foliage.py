@@ -39,6 +39,22 @@ class SeasonProfile(object):
         flower_wilt,
         center_color,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            key: Input value used by this function.
+            label: Input value used by this function.
+            description: Input value used by this function.
+            leaf_density: Input value used by this function.
+            leaf_size: Input value used by this function.
+            leaf_palette: Input value used by this function.
+            flower_density: Input value used by this function.
+            flower_size: Input value used by this function.
+            flower_palette: Input value used by this function.
+            flower_openness: Input value used by this function.
+            flower_wilt: Input value used by this function.
+            center_color: Input value used by this function.
+        """
         self.key = key
         self.label = label
         self.description = description
@@ -183,6 +199,33 @@ class WoodyFlowerSpec(object):
         season_flower_wilt=None,
         sepal_color=(0.18, 0.42, 0.14), pedicel_color=(0.18, 0.42, 0.14),
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            key: Input value used by this function.
+            label: Input value used by this function.
+            petal_count: Input value used by this function.
+            petal_shape: Input value used by this function.
+            petal_ratio: Input value used by this function.
+            petal_notch: Input value used by this function.
+            petal_claw: Input value used by this function.
+            palette: Input value used by this function.
+            center_color: Input value used by this function.
+            openness: Input value used by this function.
+            size_factor: Input value used by this function.
+            stamen_count: Input value used by this function.
+            pedicel_ratio: Input value used by this function.
+            inflorescence: Input value used by this function.
+            droop_bias: Input value used by this function.
+            peduncle_ratio: Input value used by this function.
+            pedicel_thickness: Input value used by this function.
+            flowers_per_inflorescence: Input value used by this function.
+            flowering_seasons: Input value used by this function.
+            season_flower_density: Input value used by this function.
+            season_flower_wilt: Input value used by this function.
+            sepal_color: Input value used by this function.
+            pedicel_color: Input value used by this function.
+        """
         self.key = key
         self.label = label
         self.petal_count = int(petal_count)
@@ -244,6 +287,21 @@ class WoodyLeafSpec(object):
         margin_type="entire", margin_depth=0.0, apex_type="acute", base_type="wedge",
         leaf_size_factor=1.0, leaf_color_shift=(0.0, 0.0, 0.0),
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            key: Input value used by this function.
+            label: Input value used by this function.
+            blade_shape: Input value used by this function.
+            length_width_ratio: Input value used by this function.
+            tip_acuity: Input value used by this function.
+            margin_type: Input value used by this function.
+            margin_depth: Input value used by this function.
+            apex_type: Input value used by this function.
+            base_type: Input value used by this function.
+            leaf_size_factor: Input value used by this function.
+            leaf_color_shift: Input value used by this function.
+        """
         self.key = key
         self.label = label
         self.blade_shape = blade_shape  # 'lanceolate' | 'ovate' | 'elliptic'
@@ -589,6 +647,28 @@ class FoliageConfig(object):
         twig_curvature=0.35,
         twig_leaf_ratio=0.7,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            season: Input value used by this function.
+            leaf_density_multiplier: Input value used by this function.
+            leaf_size_multiplier: Input value used by this function.
+            canopy_spread_multiplier: Input value used by this function.
+            flower_density_multiplier: Input value used by this function.
+            flower_size_multiplier: Input value used by this function.
+            seed: Input value used by this function.
+            samples_per_terminal_segment: Input value used by this function.
+            leaves_per_cluster: Input value used by this function.
+            flowers_per_tip: Input value used by this function.
+            max_leaves: Input value used by this function.
+            max_flowers: Input value used by this function.
+            woody_species: Input value used by this function.
+            twig_enabled: Input value used by this function.
+            twig_radius_ratio: Input value used by this function.
+            twig_length_ratio: Input value used by this function.
+            twig_curvature: Input value used by this function.
+            twig_leaf_ratio: Input value used by this function.
+        """
         self.season = season
         self.leaf_density_multiplier = float(leaf_density_multiplier)
         self.leaf_size_multiplier = float(leaf_size_multiplier)
@@ -638,6 +718,8 @@ class FoliageConfig(object):
         self.validate()
 
     def validate(self):
+        """Validate the current configuration and raise ValueError for invalid input.
+        """
         get_season(self.season)
         for name in (
             "leaf_density_multiplier",
@@ -725,6 +807,27 @@ class LeafInstance(object):
         tip_fold=0.0,
         has_damage=False,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            position: Input value used by this function.
+            direction: Input value used by this function.
+            azimuth: Input value used by this function.
+            length: Input value used by this function.
+            width: Input value used by this function.
+            color_index: Input value used by this function.
+            source_segment: Input value used by this function.
+            attachment_id: Input value used by this function.
+            asset_id: Input value used by this function.
+            state: Input value used by this function.
+            petiole_length: Input value used by this function.
+            species: Input value used by this function.
+            droop_factor: Input value used by this function.
+            blade_curve: Input value used by this function.
+            curl_variation: Input value used by this function.
+            tip_fold: Input value used by this function.
+            has_damage: Input value used by this function.
+        """
         self.position = position
         self.direction = direction
         self.azimuth = azimuth
@@ -785,6 +888,23 @@ class FlowerInstance(object):
         peduncle_length=0.0,
         species=None,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            position: Input value used by this function.
+            direction: Input value used by this function.
+            azimuth: Input value used by this function.
+            size: Input value used by this function.
+            color_index: Input value used by this function.
+            openness: Input value used by this function.
+            wilt: Input value used by this function.
+            source_tip: Input value used by this function.
+            attachment_id: Input value used by this function.
+            asset_id: Input value used by this function.
+            state: Input value used by this function.
+            peduncle_length: Input value used by this function.
+            species: Input value used by this function.
+        """
         self.position = position
         self.direction = direction
         self.azimuth = azimuth
@@ -862,6 +982,22 @@ class TwigInstance(object):
         seed,
         leaf_attachment_id,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            tip_index: Input value used by this function.
+            start: Input value used by this function.
+            axis: Input value used by this function.
+            side: Input value used by this function.
+            normal: Input value used by this function.
+            length: Input value used by this function.
+            base_radius: Input value used by this function.
+            tip_radius: Input value used by this function.
+            bend_axis: Input value used by this function.
+            bend_strength: Input value used by this function.
+            seed: Input value used by this function.
+            leaf_attachment_id: Input value used by this function.
+        """
         self.tip_index = int(tip_index)
         self.start = start
         self.axis = axis
@@ -905,6 +1041,16 @@ class TwigInstance(object):
 
 class FoliageModel(object):
     def __init__(self, config, profile, leaves, flowers, asset_library=None, twigs=None):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            config: Input value used by this function.
+            profile: Input value used by this function.
+            leaves: Input value used by this function.
+            flowers: Input value used by this function.
+            asset_library: Input value used by this function.
+            twigs: Input value used by this function.
+        """
         self.config = config
         self.profile = profile
         self.leaves = leaves
@@ -916,6 +1062,13 @@ class FoliageModel(object):
 
 
 def _spread_direction(direction, rng, spread):
+    """Internal helper for spread direction.
+
+    Parameters:
+        direction: Input value used by this function.
+        rng: Input value used by this function.
+        spread: Input value used by this function.
+    """
     direction = _normalize(direction)
     jitter = (
         rng.uniform(-spread, spread),
@@ -926,6 +1079,12 @@ def _spread_direction(direction, rng, spread):
 
 
 def _instance_copies(expected_count, rng):
+    """Internal helper for instance copies.
+
+    Parameters:
+        expected_count: Input value used by this function.
+        rng: Input value used by this function.
+    """
     whole = int(expected_count)
     remainder = expected_count - whole
     return whole + (1 if rng.random() < remainder else 0)
@@ -978,7 +1137,7 @@ def _project_to_branch_surface(socket, segment):
 
     This is the collision-detection step: it computes the exact point on
     the tapered cylinder (frustum) surface of ``segment`` that corresponds
-    to ``socket``.  The result is guaranteed to lie ON the bark surface  - 
+    to ``socket``.  The result is guaranteed to lie ON the bark surface  -
     neither floating outside nor clipping inside the wood.
 
     The branch segment is modelled as a frustum from ``segment.start``
@@ -1029,6 +1188,13 @@ def _project_to_branch_surface(socket, segment):
 
 
 def _lerp(a, b, amount):
+    """Internal helper for lerp.
+
+    Parameters:
+        a: Input value used by this function.
+        b: Input value used by this function.
+        amount: Input value used by this function.
+    """
     return tuple(
         a[index] + (b[index] - a[index]) * amount for index in range(3)
     )
@@ -1148,6 +1314,12 @@ FLOWER_STATE_BY_SEASON = {
 
 
 def _stable_rng(seed, identity):
+    """Internal helper for stable rng.
+
+    Parameters:
+        seed: Input value used by this function.
+        identity: Input value used by this function.
+    """
     return random.Random(int(stable_unit(seed, identity, "instance") * 2147483647))
 
 

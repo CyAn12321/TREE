@@ -34,6 +34,11 @@ SEASON_KEYS = ("spring", "summer", "autumn", "winter")
 
 
 def _config_payload(config):
+    """Internal helper for config payload.
+
+    Parameters:
+        config: Input value used by this function.
+    """
     if hasattr(config, "as_dict"):
         return dict(config.as_dict())
     return dict(config.__dict__)
@@ -77,6 +82,8 @@ def weather_config_from_json(text):
 
 
 def _maya_cmds():
+    """Internal helper for maya cmds.
+    """
     try:
         import maya.cmds as cmds
     except ImportError:
@@ -89,34 +96,78 @@ def _maya_cmds():
 
 
 def _set_string_attr(cmds, node, attr, value):
+    """Internal helper for set string attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, dataType="string")
     cmds.setAttr(node + "." + attr, value, type="string")
 
 
 def _get_string_attr(cmds, node, attr):
+    """Internal helper for get string attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         return None
     return cmds.getAttr(node + "." + attr)
 
 
 def _set_bool_attr(cmds, node, attr, value):
+    """Internal helper for set bool attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, attributeType="bool")
     cmds.setAttr(node + "." + attr, bool(value))
 
 
 def _set_long_attr(cmds, node, attr, value):
+    """Internal helper for set long attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, attributeType="long")
     cmds.setAttr(node + "." + attr, int(value))
 
 
 def mark_transform(cmds, node, attr):
+    """Execute the mark transform operation.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+    """
     _set_bool_attr(cmds, node, attr, True)
 
 
 def _direct_children(cmds, root):
+    """Internal helper for direct children.
+
+    Parameters:
+        cmds: Input value used by this function.
+        root: Input value used by this function.
+    """
     return cmds.listRelatives(
         root,
         children=True,
@@ -126,6 +177,13 @@ def _direct_children(cmds, root):
 
 
 def _children_with_marker(cmds, root, marker):
+    """Internal helper for children with marker.
+
+    Parameters:
+        cmds: Input value used by this function.
+        root: Input value used by this function.
+        marker: Input value used by this function.
+    """
     return [
         child
         for child in _direct_children(cmds, root)
@@ -300,6 +358,13 @@ def find_tree_root_from_selection(fallback_root=None):
 
 
 def _delete_children_with_marker(cmds, root, marker):
+    """Internal helper for delete children with marker.
+
+    Parameters:
+        cmds: Input value used by this function.
+        root: Input value used by this function.
+        marker: Input value used by this function.
+    """
     for child in _children_with_marker(cmds, root, marker):
         if cmds.objExists(child):
             cmds.delete(child)
@@ -405,6 +470,12 @@ def delete_foliage_nodes(root):
 
 
 def _managed_branch_mesh(cmds, root):
+    """Internal helper for managed branch mesh.
+
+    Parameters:
+        cmds: Input value used by this function.
+        root: Input value used by this function.
+    """
     marked = _children_with_marker(cmds, root, BRANCH_MARKER)
     if marked:
         return marked[0]
@@ -416,6 +487,12 @@ def _managed_branch_mesh(cmds, root):
 
 
 def _managed_foliage_group(cmds, root):
+    """Internal helper for managed foliage group.
+
+    Parameters:
+        cmds: Input value used by this function.
+        root: Input value used by this function.
+    """
     marked = _children_with_marker(cmds, root, FOLIAGE_MARKER)
     if marked:
         return marked[0]
@@ -423,6 +500,13 @@ def _managed_foliage_group(cmds, root):
 
 
 def _seasonal_cycle_groups(cmds, root, marker):
+    """Internal helper for seasonal cycle groups.
+
+    Parameters:
+        cmds: Input value used by this function.
+        root: Input value used by this function.
+        marker: Input value used by this function.
+    """
     return _children_with_marker(cmds, root, marker)
 
 
@@ -442,6 +526,12 @@ def delete_seasonal_cycle(root):
 
 
 def _copy_season_foliage_config(base_config, season_key):
+    """Internal helper for copy season foliage config.
+
+    Parameters:
+        base_config: Input value used by this function.
+        season_key: Input value used by this function.
+    """
     payload = dict(base_config.__dict__)
     payload["season"] = season_key
     return foliage.FoliageConfig(**payload)
@@ -450,6 +540,16 @@ def _copy_season_foliage_config(base_config, season_key):
 def _copy_cycle_weather_config(base_config, start_frame, end_frame, seed,
                                leaf_fall_intensity=0.0,
                                flower_fall_intensity=0.0):
+    """Internal helper for copy cycle weather config.
+
+    Parameters:
+        base_config: Input value used by this function.
+        start_frame: Input value used by this function.
+        end_frame: Input value used by this function.
+        seed: Input value used by this function.
+        leaf_fall_intensity: Input value used by this function.
+        flower_fall_intensity: Input value used by this function.
+    """
     return weather.WeatherConfig(
         wind_intensity=base_config.wind_intensity,
         wind_direction_degrees=base_config.wind_direction_degrees,
@@ -467,6 +567,14 @@ def _copy_cycle_weather_config(base_config, start_frame, end_frame, seed,
 
 
 def _key_season_visibility(cmds, group, schedule, index):
+    """Internal helper for key season visibility.
+
+    Parameters:
+        cmds: Input value used by this function.
+        group: Input value used by this function.
+        schedule: Input value used by this function.
+        index: Input value used by this function.
+    """
     start_frame = schedule[index]["start_frame"]
     end_frame = schedule[index]["end_frame"]
     cmds.setAttr(group + ".visibility", False)
@@ -491,6 +599,18 @@ def _create_seasonal_fall_layer(
     transition_frames,
     name,
 ):
+    """Internal helper for create seasonal fall layer.
+
+    Parameters:
+        root: Input value used by this function.
+        cycle_group: Input value used by this function.
+        tree_result: Input value used by this function.
+        season_results: Input value used by this function.
+        schedule: Input value used by this function.
+        weather_config: Input value used by this function.
+        transition_frames: Input value used by this function.
+        name: Input value used by this function.
+    """
     cmds = _maya_cmds()
     fall_group = cmds.group(
         empty=True,
@@ -679,6 +799,12 @@ def create_seasonal_cycle_in_maya(
 
 
 def _foliage_meshes(cmds, group):
+    """Internal helper for foliage meshes.
+
+    Parameters:
+        cmds: Input value used by this function.
+        group: Input value used by this function.
+    """
     if not group or not cmds.objExists(group):
         return [], []
     descendants = cmds.listRelatives(
@@ -717,6 +843,12 @@ def _foliage_meshes(cmds, group):
 
 
 def _tree_result_from_root(root, tree_config=None):
+    """Internal helper for tree result from root.
+
+    Parameters:
+        root: Input value used by this function.
+        tree_config: Input value used by this function.
+    """
     cmds = _maya_cmds()
     config = tree_config or get_tree_config(root)
     model = core.generate_tree(config)
@@ -731,6 +863,12 @@ def _tree_result_from_root(root, tree_config=None):
 
 
 def _foliage_result_from_root(root, tree_model):
+    """Internal helper for foliage result from root.
+
+    Parameters:
+        root: Input value used by this function.
+        tree_model: Input value used by this function.
+    """
     cmds = _maya_cmds()
     config = get_foliage_config(root)
     group = _managed_foliage_group(cmds, root)

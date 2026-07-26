@@ -1,3 +1,9 @@
+"""Build the formatted algorithm-design document from the Markdown source.
+
+This helper is a documentation build script, not part of the Maya runtime.
+Its generated document is kept alongside the source Markdown for review.
+"""
+
 from __future__ import annotations
 
 import re
@@ -33,6 +39,16 @@ MONO_FONT = "Consolas"
 
 
 def set_run_font(run, size=None, color=None, bold=None, italic=None, mono=False):
+    """Execute the set run font documentation-build operation.
+
+    Parameters:
+        run: Input value used by this function.
+        size: Input value used by this function.
+        color: Input value used by this function.
+        bold: Input value used by this function.
+        italic: Input value used by this function.
+        mono: Input value used by this function.
+    """
     font_name = MONO_FONT if mono else LATIN_FONT
     east_asia = MONO_FONT if mono else CJK_FONT
     run.font.name = font_name
@@ -50,6 +66,15 @@ def set_run_font(run, size=None, color=None, bold=None, italic=None, mono=False)
 
 
 def set_cell_margins(cell, top=80, start=120, bottom=80, end=120):
+    """Execute the set cell margins documentation-build operation.
+
+    Parameters:
+        cell: Input value used by this function.
+        top: Input value used by this function.
+        start: Input value used by this function.
+        bottom: Input value used by this function.
+        end: Input value used by this function.
+    """
     tc = cell._tc
     tc_pr = tc.get_or_add_tcPr()
     tc_mar = tc_pr.first_child_found_in("w:tcMar")
@@ -71,6 +96,12 @@ def set_cell_margins(cell, top=80, start=120, bottom=80, end=120):
 
 
 def shade_cell(cell, fill):
+    """Execute the shade cell documentation-build operation.
+
+    Parameters:
+        cell: Input value used by this function.
+        fill: Input value used by this function.
+    """
     tc_pr = cell._tc.get_or_add_tcPr()
     shd = tc_pr.find(qn("w:shd"))
     if shd is None:
@@ -80,6 +111,13 @@ def shade_cell(cell, fill):
 
 
 def set_table_borders(table, color=GRID, size=6):
+    """Execute the set table borders documentation-build operation.
+
+    Parameters:
+        table: Input value used by this function.
+        color: Input value used by this function.
+        size: Input value used by this function.
+    """
     tbl_pr = table._tbl.tblPr
     borders = tbl_pr.find(qn("w:tblBorders"))
     if borders is None:
@@ -97,6 +135,13 @@ def set_table_borders(table, color=GRID, size=6):
 
 
 def set_table_geometry(table, widths_dxa, indent_dxa=120):
+    """Execute the set table geometry documentation-build operation.
+
+    Parameters:
+        table: Input value used by this function.
+        widths_dxa: Input value used by this function.
+        indent_dxa: Input value used by this function.
+    """
     table.autofit = False
     tbl_pr = table._tbl.tblPr
     tbl_w = tbl_pr.find(qn("w:tblW"))
@@ -137,6 +182,11 @@ def set_table_geometry(table, widths_dxa, indent_dxa=120):
 
 
 def set_repeat_table_header(row):
+    """Execute the set repeat table header documentation-build operation.
+
+    Parameters:
+        row: Input value used by this function.
+    """
     tr_pr = row._tr.get_or_add_trPr()
     tbl_header = OxmlElement("w:tblHeader")
     tbl_header.set(qn("w:val"), "true")
@@ -144,6 +194,13 @@ def set_repeat_table_header(row):
 
 
 def add_hyperlink(paragraph, text, url):
+    """Execute the add hyperlink documentation-build operation.
+
+    Parameters:
+        paragraph: Input value used by this function.
+        text: Input value used by this function.
+        url: Input value used by this function.
+    """
     part = paragraph.part
     relationship_id = part.relate_to(
         url,
@@ -175,6 +232,14 @@ INLINE_TOKEN = re.compile(r"(\*\*.+?\*\*|`.+?`|https?://[^\s；;）)]+)")
 
 
 def add_rich_text(paragraph, text, size=11, color=None):
+    """Execute the add rich text documentation-build operation.
+
+    Parameters:
+        paragraph: Input value used by this function.
+        text: Input value used by this function.
+        size: Input value used by this function.
+        color: Input value used by this function.
+    """
     position = 0
     for match in INLINE_TOKEN.finditer(text):
         if match.start() > position:
@@ -199,6 +264,11 @@ def add_rich_text(paragraph, text, size=11, color=None):
 
 
 def add_page_field(paragraph):
+    """Execute the add page field documentation-build operation.
+
+    Parameters:
+        paragraph: Input value used by this function.
+    """
     run = paragraph.add_run()
     begin = OxmlElement("w:fldChar")
     begin.set(qn("w:fldCharType"), "begin")
@@ -216,6 +286,13 @@ def add_page_field(paragraph):
 
 
 def paragraph_bottom_border(paragraph, color="9CB4C8", size=10):
+    """Execute the paragraph bottom border documentation-build operation.
+
+    Parameters:
+        paragraph: Input value used by this function.
+        color: Input value used by this function.
+        size: Input value used by this function.
+    """
     p_pr = paragraph._p.get_or_add_pPr()
     p_bdr = p_pr.find(qn("w:pBdr"))
     if p_bdr is None:
@@ -230,6 +307,11 @@ def paragraph_bottom_border(paragraph, color="9CB4C8", size=10):
 
 
 def configure_styles(doc):
+    """Execute the configure styles documentation-build operation.
+
+    Parameters:
+        doc: Input value used by this function.
+    """
     styles = doc.styles
     normal = styles["Normal"]
     normal.font.name = LATIN_FONT
@@ -290,6 +372,11 @@ def configure_styles(doc):
 
 
 def configure_page(doc):
+    """Execute the configure page documentation-build operation.
+
+    Parameters:
+        doc: Input value used by this function.
+    """
     section = doc.sections[0]
     section.page_width = Inches(8.5)
     section.page_height = Inches(11)
@@ -318,6 +405,11 @@ def configure_page(doc):
 
 
 def draw_architecture(path):
+    """Execute the draw architecture documentation-build operation.
+
+    Parameters:
+        path: Input value used by this function.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     width, height = 1600, 920
     image = Image.new("RGB", (width, height), "#FFFFFF")
@@ -373,6 +465,11 @@ def draw_architecture(path):
 
 
 def add_cover(doc):
+    """Execute the add cover documentation-build operation.
+
+    Parameters:
+        doc: Input value used by this function.
+    """
     for _ in range(4):
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(14)
@@ -429,6 +526,11 @@ def add_cover(doc):
 
 
 def add_navigation(doc):
+    """Execute the add navigation documentation-build operation.
+
+    Parameters:
+        doc: Input value used by this function.
+    """
     p = doc.add_paragraph("内容导览", style="Heading 1")
     p.paragraph_format.space_before = Pt(0)
     entries = [
@@ -464,6 +566,12 @@ def add_navigation(doc):
 
 
 def parse_table(lines, start):
+    """Execute the parse table documentation-build operation.
+
+    Parameters:
+        lines: Input value used by this function.
+        start: Input value used by this function.
+    """
     rows = []
     index = start
     while index < len(lines) and lines[index].lstrip().startswith("|"):
@@ -476,6 +584,11 @@ def parse_table(lines, start):
 
 
 def widths_for_table(column_count):
+    """Execute the widths for table documentation-build operation.
+
+    Parameters:
+        column_count: Input value used by this function.
+    """
     if column_count == 3:
         return [1750, 2900, 4710]
     if column_count == 6:
@@ -487,6 +600,12 @@ def widths_for_table(column_count):
 
 
 def add_markdown_table(doc, rows):
+    """Execute the add markdown table documentation-build operation.
+
+    Parameters:
+        doc: Input value used by this function.
+        rows: Input value used by this function.
+    """
     if not rows:
         return
     column_count = len(rows[0])
@@ -515,6 +634,12 @@ def add_markdown_table(doc, rows):
 
 
 def add_body(doc, source_text):
+    """Execute the add body documentation-build operation.
+
+    Parameters:
+        doc: Input value used by this function.
+        source_text: Input value used by this function.
+    """
     lines = source_text.splitlines()
     # Skip the Markdown title/metadata already represented by the cover.
     start = next(index for index, line in enumerate(lines) if line.startswith("## 0."))
@@ -526,6 +651,8 @@ def add_body(doc, source_text):
     inserted_diagram = False
 
     def flush_paragraph():
+        """Execute the flush paragraph documentation-build operation.
+        """
         if not paragraph_buffer:
             return
         source = " ".join(part.strip() for part in paragraph_buffer)
@@ -625,6 +752,11 @@ def add_body(doc, source_text):
 
 
 def audit_document(doc):
+    """Execute the audit document documentation-build operation.
+
+    Parameters:
+        doc: Input value used by this function.
+    """
     assert len(doc.sections) == 1
     section = doc.sections[0]
     assert round(section.page_width.inches, 2) == 8.5
@@ -647,6 +779,8 @@ def audit_document(doc):
 
 
 def main():
+    """Execute the main documentation-build operation.
+    """
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     draw_architecture(DIAGRAM)
     source_text = SOURCE.read_text(encoding="utf-8")

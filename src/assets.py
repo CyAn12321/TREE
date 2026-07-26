@@ -13,7 +13,14 @@ import os
 from .math_utils import stable_unit
 
 
+# Asset provenance is recorded in ``assets/organs/SOURCES.md``.  The bundled
+# Kenney Nature Kit meshes are CC0 assets; the loader below is original project
+# code that normalizes and triangulates them for Maya instancing.
+
+
 def _project_root():
+    """Internal helper for project root.
+    """
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
@@ -28,6 +35,12 @@ def default_catalog_path():
 
 class OrganAsset(object):
     def __init__(self, root, data):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            root: Input value used by this function.
+            data: Input value used by this function.
+        """
         self.id = str(data["id"])
         self.kind = str(data["kind"])
         self.path = os.path.normpath(os.path.join(root, data["file"]))
@@ -36,17 +49,34 @@ class OrganAsset(object):
         self.states = tuple(data.get("states", ()))
 
     def supports(self, kind, state=None):
+        """Return whether this object supports the requested option.
+
+        Parameters:
+            kind: Input value used by this function.
+            state: Input value used by this function.
+        """
         return self.kind == kind and (state is None or state in self.states)
 
 
 class OrganMesh(object):
     def __init__(self, vertices, faces):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            vertices: Input value used by this function.
+            faces: Input value used by this function.
+        """
         self.vertices = tuple(vertices)
         self.faces = tuple(tuple(face) for face in faces)
 
 
 class OrganAssetLibrary(object):
     def __init__(self, catalog_path=None):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            catalog_path: Input value used by this function.
+        """
         self.catalog_path = os.path.abspath(catalog_path or default_catalog_path())
         with open(self.catalog_path, "r") as stream:
             data = json.load(stream)
@@ -57,9 +87,20 @@ class OrganAssetLibrary(object):
         self._mesh_cache = {}
 
     def get(self, asset_id):
+        """Execute the get operation.
+
+        Parameters:
+            asset_id: Input value used by this function.
+        """
         return self._by_id[asset_id]
 
     def candidates(self, kind, state=None):
+        """Execute the candidates operation.
+
+        Parameters:
+            kind: Input value used by this function.
+            state: Input value used by this function.
+        """
         exact = [asset for asset in self.assets if asset.supports(kind, state)]
         if exact:
             return exact
@@ -92,12 +133,23 @@ class OrganAssetLibrary(object):
         return candidates[-1]
 
     def mesh(self, asset_id):
+        """Execute the mesh operation.
+
+        Parameters:
+            asset_id: Input value used by this function.
+        """
         if asset_id not in self._mesh_cache:
             self._mesh_cache[asset_id] = load_obj_normalized(self.get(asset_id).path)
         return self._mesh_cache[asset_id]
 
 
 def _obj_index(token, vertex_count):
+    """Internal helper for obj index.
+
+    Parameters:
+        token: Input value used by this function.
+        vertex_count: Input value used by this function.
+    """
     value = int(token.split("/", 1)[0])
     return value - 1 if value > 0 else vertex_count + value
 

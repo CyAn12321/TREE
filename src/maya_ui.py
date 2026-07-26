@@ -153,6 +153,8 @@ def _season_label(season_key):
 
 
 def _maya_cmds():
+    """Internal helper for maya cmds.
+    """
     try:
         import maya.cmds as cmds
     except ImportError:
@@ -193,6 +195,8 @@ class TreeGeneratorUI(object):
     """
 
     def __init__(self):
+        """Initialize this object from the supplied configuration or input data.
+        """
         self.controls = {}
         self.last_root = None
 
@@ -276,6 +280,11 @@ class TreeGeneratorUI(object):
     # --- Config readers ----------------------------------------------------
 
     def _read_tree_config(self, cmds):
+        """Internal helper for read tree config.
+
+        Parameters:
+            cmds: Input value used by this function.
+        """
         info = self._selected_species_info(cmds)
         return core.TreeConfig.from_preset(
             info["preset_key"],
@@ -298,6 +307,12 @@ class TreeGeneratorUI(object):
         )
 
     def _read_foliage_config(self, cmds, tree_seed):
+        """Internal helper for read foliage config.
+
+        Parameters:
+            cmds: Input value used by this function.
+            tree_seed: Input value used by this function.
+        """
         info = self._selected_species_info(cmds)
         return foliage.FoliageConfig(
             season=self._selected_season_key(cmds),
@@ -336,6 +351,12 @@ class TreeGeneratorUI(object):
         )
 
     def _read_weather_config(self, cmds, tree_seed):
+        """Internal helper for read weather config.
+
+        Parameters:
+            cmds: Input value used by this function.
+            tree_seed: Input value used by this function.
+        """
         return weather.WeatherConfig(
             wind_intensity=cmds.floatSliderGrp(
                 self.controls["wind_intensity"], query=True, value=True
@@ -359,6 +380,11 @@ class TreeGeneratorUI(object):
         )
 
     def _read_seasonal_cycle_settings(self, cmds):
+        """Internal helper for read seasonal cycle settings.
+
+        Parameters:
+            cmds: Input value used by this function.
+        """
         return (
             cmds.intFieldGrp(
                 self.controls["cycle_start"], query=True, value1=True

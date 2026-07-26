@@ -722,7 +722,7 @@ def _emit_subdivided_petal(points, counts, connects,
             lateral_tip = tip_deflect * petal_width * 0.3 * deflect_t
         # Spoon-shaped dish (spoon-shaped depression): mid stays at the cup arc height
         # while upper verts sit BELOW mid by edge_curl * 0.55.  This
-        # forms a longitudinal groove along the petal centerline  - 
+        # forms a longitudinal groove along the petal centerline  -
         # petals read as a spoon/dish instead of a flat plate.  Edge
         # verts curl further down (edge_curl * 1.4) to roll the margin
         # under, the hallmark of real Rosaceae petals whose edges are
@@ -804,6 +804,11 @@ def _emit_subdivided_petal(points, counts, connects,
         points.append(_add(points[i], back_offset))
 
     def back_idx(front_index):
+        """Execute the back idx operation.
+
+        Parameters:
+            front_index: Input value used by this function.
+        """
         return front_index + front_count
 
     # Back faces: same topology, reversed winding.
@@ -1156,7 +1161,7 @@ def build_flower_mesh_groups(foliage_model):
             )
         # Flattened octahedral floral disc (receptacle).
         # The axis-direction poles are compressed to 40% so the
-        # receptacle reads as a disc/dome rather than a sphere  - 
+        # receptacle reads as a disc/dome rather than a sphere  -
         # botanically the receptacle is a flattened structure.
         _emit_octahedron(
             center_points, center_counts, center_connects,
@@ -1727,7 +1732,7 @@ def _material_with_veins(cmds, name, color, kind=None, species=None,
                 force=True,
             )
 
-    # NOTE: A petal base->tip ramp gradient was attempted but removed  - 
+    # NOTE: A petal base->tip ramp gradient was attempted but removed  -
     # MFnMesh.create() produces procedural meshes WITHOUT UV coordinates,
     # so the ramp texture sampled to default and turned flowers black.
     # Restoring the gradient would require authoring UVs per-petal.  The
@@ -1736,12 +1741,28 @@ def _material_with_veins(cmds, name, color, kind=None, species=None,
 
 
 def _set_bool_attr(cmds, node, attr, value):
+    """Internal helper for set bool attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, attributeType="bool")
     cmds.setAttr(node + "." + attr, bool(value))
 
 
 def _set_string_attr(cmds, node, attr, value):
+    """Internal helper for set string attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, dataType="string")
     cmds.setAttr(node + "." + attr, value, type="string")
@@ -1915,6 +1936,14 @@ def _create_mesh(cmds, om, arrays, name, parent, shading_group, smooth_level=0,
 
 class _PrototypeFoliageModel(object):
     def __init__(self, profile, leaves=None, flowers=None, asset_library=None):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            profile: Input value used by this function.
+            leaves: Input value used by this function.
+            flowers: Input value used by this function.
+            asset_library: Input value used by this function.
+        """
         self.profile = profile
         self.leaves = list(leaves or [])
         self.flowers = list(flowers or [])
@@ -1922,6 +1951,11 @@ class _PrototypeFoliageModel(object):
 
 
 def _dominant_color_index(instances):
+    """Internal helper for dominant color index.
+
+    Parameters:
+        instances: Input value used by this function.
+    """
     return Counter(instance.color_index for instance in instances).most_common(1)[0][0]
 
 
@@ -2086,7 +2120,7 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
     #
     # Color separation (botanically accurate):
     # - Petals: species palette (pink/white) with translucent SSS.
-    # - Center (receptacle + stamens + pistil): species center_color  - 
+    # - Center (receptacle + stamens + pistil): species center_color  -
     #   peach orange, cherry yellow, pear dark-purple, plum yellow.
     #   Previously this used profile.center_color (seasonal), which
     #   ignored the species-specific anther/stigma coloring entirely.
@@ -2163,7 +2197,7 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
             smooth_level=smooth,
             depth_bias=-1.0,
         )
-    # polyUnite with explicit if/else instead of *args unpacking  - 
+    # polyUnite with explicit if/else instead of *args unpacking  -
     # *unpacking in function calls is Python 3.5+ only, but Maya
     # 2018/2019 ships Python 2.7 and raises SyntaxError ("parse error")
     # on this syntax at import time.

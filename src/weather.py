@@ -32,6 +32,22 @@ class WeatherConfig(object):
         max_falling_leaves=600,
         max_falling_flowers=300,
     ):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            wind_intensity: Input value used by this function.
+            wind_direction_degrees: Input value used by this function.
+            start_frame: Input value used by this function.
+            end_frame: Input value used by this function.
+            seed: Input value used by this function.
+            frames_per_second: Input value used by this function.
+            rain_intensity: Input value used by this function.
+            snow_intensity: Input value used by this function.
+            leaf_fall_intensity: Input value used by this function.
+            flower_fall_intensity: Input value used by this function.
+            max_falling_leaves: Input value used by this function.
+            max_falling_flowers: Input value used by this function.
+        """
         self.wind_intensity = float(wind_intensity)
         self.wind_direction_degrees = float(wind_direction_degrees)
         self.start_frame = int(start_frame)
@@ -50,6 +66,8 @@ class WeatherConfig(object):
         self.validate()
 
     def validate(self):
+        """Validate the current configuration and raise ValueError for invalid input.
+        """
         for name in (
             "wind_intensity",
             "rain_intensity",
@@ -72,9 +90,13 @@ class WeatherConfig(object):
         return self.has_wind() or self.has_falling_organs()
 
     def has_wind(self):
+        """Execute the has wind operation.
+        """
         return self.wind_intensity > 0.0
 
     def has_falling_organs(self):
+        """Execute the has falling organs operation.
+        """
         return (
             self.leaf_fall_intensity > 0.0
             or self.flower_fall_intensity > 0.0
@@ -83,15 +105,33 @@ class WeatherConfig(object):
 
 class WeatherPlan(object):
     def __init__(self, config, bounds, values):
+        """Initialize this object from the supplied configuration or input data.
+
+        Parameters:
+            config: Input value used by this function.
+            bounds: Input value used by this function.
+            values: Input value used by this function.
+        """
         self.config = config
         self.minimum_bounds, self.maximum_bounds = bounds
         self.values = dict(values)
 
     def __getitem__(self, key):
+        """Internal helper for  getitem  .
+
+        Parameters:
+            key: Input value used by this function.
+        """
         return self.values[key]
 
 
 def _combined_bounds(tree_model, foliage_model=None):
+    """Internal helper for combined bounds.
+
+    Parameters:
+        tree_model: Input value used by this function.
+        foliage_model: Input value used by this function.
+    """
     minimum, maximum = tree_model.bounds()
     points = []
     if foliage_model:

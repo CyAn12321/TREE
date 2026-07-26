@@ -13,6 +13,11 @@ import math
 
 
 def clamp01(value):
+    """Execute the clamp01 operation.
+
+    Parameters:
+        value: Input value used by this function.
+    """
     return max(0.0, min(1.0, float(value)))
 
 

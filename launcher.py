@@ -8,6 +8,11 @@ import sys
 
 
 def _is_project_root(path):
+    """Return whether ``path`` contains the expected TREE source layout.
+
+    Parameters:
+        path (str): Candidate project directory to inspect.
+    """
     return bool(path) and os.path.isfile(
         os.path.join(path, "src", "core.py")
     )

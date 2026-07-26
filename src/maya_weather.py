@@ -20,6 +20,12 @@ from . import maya_foliage
 from .weather import WeatherConfig, build_weather_plan
 
 
+# Animation provenance: the bounded multi-frequency sway is informed by the
+# vegetation-wind techniques discussed in GPU Gems 3, Chapter 6.  This file
+# implements a project-specific Maya bend/deformer and keyed-instance layer;
+# it does not copy source code from that reference.
+
+
 ANIMATION_MARKER = "lsystemAnimationManaged"
 LEGACY_WEATHER_MARKER = "lsystemWeatherManaged"
 ANIMATION_GROUP_SUFFIX = "_WindAnimation"
@@ -27,6 +33,8 @@ EXPRESSION_SUFFIX = "_WindExpression"
 
 
 def _maya_cmds():
+    """Internal helper for maya cmds.
+    """
     try:
         import maya.cmds as cmds
     except ImportError:
@@ -36,6 +44,12 @@ def _maya_cmds():
 
 
 def _shape(cmds, transform):
+    """Internal helper for shape.
+
+    Parameters:
+        cmds: Input value used by this function.
+        transform: Input value used by this function.
+    """
     shapes = cmds.listRelatives(transform, shapes=True, fullPath=True) or []
     return shapes[0] if shapes else transform
 
@@ -69,17 +83,41 @@ def _weather_material(cmds, name, color, transparency=0.0):
 
 
 def _safe_set(cmds, plug, *values, **kwargs):
+    """Internal helper for safe set.
+
+    Parameters:
+        cmds: Input value used by this function.
+        plug: Input value used by this function.
+        values: Input value used by this function.
+        **kwargs: Input value used by this function.
+    """
     if cmds.objExists(plug):
         cmds.setAttr(plug, *values, **kwargs)
 
 
 def _set_string_attr(cmds, node, attr, value):
+    """Internal helper for set string attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, dataType="string")
     cmds.setAttr(node + "." + attr, value, type="string")
 
 
 def _set_bool_attr(cmds, node, attr, value):
+    """Internal helper for set bool attr.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attr: Input value used by this function.
+        value: Input value used by this function.
+    """
     if not cmds.attributeQuery(attr, node=node, exists=True):
         cmds.addAttr(node, longName=attr, attributeType="bool")
     cmds.setAttr(node + "." + attr, bool(value))
@@ -101,6 +139,12 @@ def _mesh_targets(cmds, tree_result, foliage_result):
 
 
 def _delete_node(cmds, node):
+    """Internal helper for delete node.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+    """
     try:
         if node and cmds.objExists(node):
             cmds.delete(node)
@@ -111,6 +155,12 @@ def _delete_node(cmds, node):
 
 
 def _direct_children(cmds, root):
+    """Internal helper for direct children.
+
+    Parameters:
+        cmds: Input value used by this function.
+        root: Input value used by this function.
+    """
     return cmds.listRelatives(
         root,
         children=True,
@@ -120,6 +170,12 @@ def _direct_children(cmds, root):
 
 
 def _is_animation_group(cmds, node):
+    """Internal helper for is animation group.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+    """
     return (
         cmds.attributeQuery(ANIMATION_MARKER, node=node, exists=True)
         or cmds.attributeQuery(LEGACY_WEATHER_MARKER, node=node, exists=True)
@@ -193,6 +249,13 @@ def _register_managed_nodes(cmds, group, nodes):
     # renames a sibling.  Resolve the group again before querying attributes;
     # otherwise refresh ends with "no object named ..._WindAnimation" even
     # though the animation itself was created and can play.
+    """Internal helper for register managed nodes.
+
+    Parameters:
+        cmds: Input value used by this function.
+        group: Input value used by this function.
+        nodes: Input value used by this function.
+    """
     resolved_groups = cmds.ls(group, long=True) or []
     if not resolved_groups:
         return
@@ -227,6 +290,19 @@ def _create_bend_layer(
     amplitude,
     frequency,
 ):
+    """Internal helper for create bend layer.
+
+    Parameters:
+        cmds: Input value used by this function.
+        targets: Input value used by this function.
+        plan: Input value used by this function.
+        group: Input value used by this function.
+        name: Input value used by this function.
+        deformer_suffix: Input value used by this function.
+        expression_suffix: Input value used by this function.
+        amplitude: Input value used by this function.
+        frequency: Input value used by this function.
+    """
     if not targets or amplitude <= 0.0:
         return []
 
@@ -272,6 +348,14 @@ def _create_bend_layer(
 
 
 def _create_particle_system(cmds, name, lifespan, max_count):
+    """Internal helper for create particle system.
+
+    Parameters:
+        cmds: Input value used by this function.
+        name: Input value used by this function.
+        lifespan: Input value used by this function.
+        max_count: Input value used by this function.
+    """
     cmds.select(clear=True)
     created = list(cmds.particle(name=name))
     shape = next(
@@ -314,6 +398,17 @@ def _create_surface_emitters(
     drop_count,
     config,
 ):
+    """Internal helper for create surface emitters.
+
+    Parameters:
+        cmds: Input value used by this function.
+        meshes: Input value used by this function.
+        particles: Input value used by this function.
+        group: Input value used by this function.
+        name: Input value used by this function.
+        drop_count: Input value used by this function.
+        config: Input value used by this function.
+    """
     valid_meshes = [
         mesh for mesh in meshes
         if mesh and cmds.objExists(mesh)
@@ -348,6 +443,15 @@ def _create_surface_emitters(
 
 
 def _create_gravity(cmds, particle_transform, group, name, magnitude):
+    """Internal helper for create gravity.
+
+    Parameters:
+        cmds: Input value used by this function.
+        particle_transform: Input value used by this function.
+        group: Input value used by this function.
+        name: Input value used by this function.
+        magnitude: Input value used by this function.
+    """
     cmds.select(clear=True)
     field = cmds.gravity(
         name=name,
@@ -362,6 +466,16 @@ def _create_gravity(cmds, particle_transform, group, name, magnitude):
 
 
 def _create_air(cmds, particle_transform, group, name, plan, magnitude):
+    """Internal helper for create air.
+
+    Parameters:
+        cmds: Input value used by this function.
+        particle_transform: Input value used by this function.
+        group: Input value used by this function.
+        name: Input value used by this function.
+        plan: Input value used by this function.
+        magnitude: Input value used by this function.
+    """
     radians = math.radians(plan.config.wind_direction_degrees)
     cmds.select(clear=True)
     field = cmds.air(
@@ -379,6 +493,11 @@ def _create_air(cmds, particle_transform, group, name, plan, magnitude):
 
 
 def _organ_rotation(source):
+    """Internal helper for organ rotation.
+
+    Parameters:
+        source: Input value used by this function.
+    """
     direction = source.direction
     horizontal = math.sqrt(direction[0] ** 2 + direction[2] ** 2)
     pitch = math.degrees(math.atan2(horizontal, max(direction[1], 0.001)))
@@ -387,6 +506,17 @@ def _organ_rotation(source):
 
 
 def _set_keyed_value(cmds, node, attribute, start_frame, end_frame, start, end):
+    """Internal helper for set keyed value.
+
+    Parameters:
+        cmds: Input value used by this function.
+        node: Input value used by this function.
+        attribute: Input value used by this function.
+        start_frame: Input value used by this function.
+        end_frame: Input value used by this function.
+        start: Input value used by this function.
+        end: Input value used by this function.
+    """
     plug = node + "." + attribute
     cmds.setAttr(plug, start)
     cmds.setKeyframe(plug, time=start_frame, value=start)
@@ -404,6 +534,17 @@ def _set_keyed_curve(cmds, node, attribute, keys):
 def _create_falling_organs(
     cmds, foliage_result, plan, group, name, kind, duration_override=None
 ):
+    """Internal helper for create falling organs.
+
+    Parameters:
+        cmds: Input value used by this function.
+        foliage_result: Input value used by this function.
+        plan: Input value used by this function.
+        group: Input value used by this function.
+        name: Input value used by this function.
+        kind: Input value used by this function.
+        duration_override: Input value used by this function.
+    """
     if not foliage_result:
         return []
     if kind == "leaf":
@@ -548,6 +689,15 @@ def _create_falling_organs(
 
 
 def _create_wind(cmds, tree_targets, plan, group, name):
+    """Internal helper for create wind.
+
+    Parameters:
+        cmds: Input value used by this function.
+        tree_targets: Input value used by this function.
+        plan: Input value used by this function.
+        group: Input value used by this function.
+        name: Input value used by this function.
+    """
     if not plan.config.has_wind():
         return []
 
