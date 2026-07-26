@@ -72,29 +72,20 @@ TREE_SPECIES = {
     # re-introduced, uncomment these entries and restore the corresponding
     # foliage preset tables (LEAF_WIDTH_BY_TREE_PRESET etc.) in foliage.py.
     #
-    # "weeping_willow": {
-    #     "label": "Weeping Willow",
-    #     "description": (
-    #         "Weeping willow (Salix babylonica). Long drooping branches with "
-    #         "a downward tropism."
-    #     ),
-    #     "preset_key": "willow_weeping",
-    #     "woody_species": None,
-    # },
-    # "columnar_poplar": {
-    #     "label": "Columnar Poplar",
-    #     "description": (
-    #         "Columnar poplar (Populus nigra). Narrow upward branches forming "
-    #         "a slim vertical canopy."
-    #     ),
-    #     "preset_key": "columnar_poplar",
-    #     "woody_species": None,
-    # },
+    "weeping_willow": {
+        "label": "Weeping Willow",
+        "description": (
+            "Weeping willow (Salix babylonica). Long drooping branches "
+            "with narrow lanceolate leaves; catkins in spring."
+        ),
+        "preset_key": "willow_weeping",
+        "woody_species": "willow",
+    },
     # "pyramidal_conifer": {
-    #     "label": "Pyramidal Conifer",
+    #     "label": "Japanese Cedar",
     #     "description": (
-    #         "Pyramidal conifer (e.g. Cedrus). Clear central axis with radial "
-    #         "side branches forming a tapered silhouette."
+    #         "Japanese cedar (Cryptomeria japonica). Evergreen pyramidal "
+    #         "conifer with spirally-arranged awl-shaped needle leaves."
     #     ),
     #     "preset_key": "conifer_pyramidal",
     #     "woody_species": None,

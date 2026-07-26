@@ -446,6 +446,26 @@ WOODY_FLOWER_SPECS = {
         # dead residue).  Spring keeps the season default (0.02).
         season_flower_wilt={"winter": 0.10},
     ),
+    # --- Non-flowering tree species (2026-07) ---
+    # Willow has no showy petals.  ``flowering_seasons`` is set to an
+    # empty tuple so that no flowers are emitted in any season; the
+    # foliage generator picks up only the WOODY_LEAF_SPECS entry.
+    "willow": WoodyFlowerSpec(
+        key="willow",
+        label="Weeping Willow",
+        petal_count=5,
+        petal_shape="round",
+        petal_ratio=1.0,
+        petal_notch=0.0,
+        petal_claw=0.0,
+        palette=((0.85, 0.82, 0.55),),
+        center_color=(0.7, 0.65, 0.4),
+        openness=0.0,
+        size_factor=0.0,
+        stamen_count=0,
+        pedicel_ratio=0.0,
+        flowering_seasons=(),  # no showy flowers; catkins deferred to Phase 3
+    ),
 }
 
 # Leaf silhouettes follow the classic botanical leaf-shape taxonomy
@@ -494,6 +514,17 @@ WOODY_LEAF_SPECS = {
         # (median 6 / 2.25 = 2.67x).  leaf_factor = 0.85 * 2.67 = 2.27.
         # Shrink history: 75% (1.70) -> 65% (1.45) of real-ratio.
         leaf_size_factor=1.45,
+    ),
+    # --- Non-flowering tree species (2026-07) ---
+    # Leaf-only species; their WOODY_FLOWER_SPECS entries use
+    # flowering_seasons=() so no blossoms are emitted.
+    "willow": WoodyLeafSpec(
+        "willow", "Willow Leaf", "lanceolate", 10.0, 0.85,
+        margin_type="serrate", margin_depth=0.03,
+        apex_type="acuminate", base_type="wedge",
+        # Willow leaves: 7-16cm x 0.5-1.5cm (median 11.5cm).
+        # Similar size to peach → same leaf_size_factor.
+        leaf_size_factor=2.44,
     ),
 }
 
@@ -618,12 +649,19 @@ class FoliageConfig(object):
             raise ValueError("cluster sizes must be positive")
         if self.max_leaves < 0 or self.max_flowers < 0:
             raise ValueError("instance limits cannot be negative")
-        if self.woody_species is not None and self.woody_species not in WOODY_FLOWER_SPECS:
-            raise ValueError(
-                "Unknown woody_species '{}'; expected one of {}".format(
-                    self.woody_species, sorted(WOODY_FLOWER_SPECS.keys())
+        if self.woody_species is not None:
+            if self.woody_species not in WOODY_FLOWER_SPECS:
+                raise ValueError(
+                    "Unknown woody_species '{}' in flower specs; expected one of {}".format(
+                        self.woody_species, sorted(WOODY_FLOWER_SPECS.keys())
+                    )
                 )
-            )
+            if self.woody_species not in WOODY_LEAF_SPECS:
+                raise ValueError(
+                    "Unknown woody_species '{}' in leaf specs; expected one of {}".format(
+                        self.woody_species, sorted(WOODY_LEAF_SPECS.keys())
+                    )
+                )
         if self.twig_curvature > 1.0:
             raise ValueError("twig_curvature must be <= 1.0 (90 degrees max bend)")
 
