@@ -7,10 +7,10 @@ to unit height, with the lowest Y point placed at the attachment origin.
 
 from __future__ import division, print_function
 
-import hashlib
-import binascii
 import json
 import os
+
+from .math_utils import stable_unit
 
 
 def _project_root():
@@ -18,14 +18,12 @@ def _project_root():
 
 
 def default_catalog_path():
+    """Return the absolute path to the bundled organ catalog JSON.
+
+    Returns:
+        str: Path to ``assets/organs/catalog.json``.
+    """
     return os.path.join(_project_root(), "assets", "organs", "catalog.json")
-
-
-def stable_unit(seed, identity, channel="default"):
-    payload = "{}|{}|{}".format(int(seed), identity, channel).encode("utf-8")
-    digest = hashlib.sha256(payload).digest()
-    integer = int(binascii.hexlify(digest[:8]), 16)
-    return integer / float((1 << 64) - 1)
 
 
 class OrganAsset(object):
@@ -68,6 +66,17 @@ class OrganAssetLibrary(object):
         return [asset for asset in self.assets if asset.kind == kind]
 
     def choose(self, kind, state, seed, identity):
+        """Stochastically choose an asset of ``kind`` matching ``state``.
+
+        Parameters:
+            kind (str): "leaf" or "flower".
+            state (str): Lifecycle state ("fresh", "mature", "dry",
+                "bloom", "wilted").  Assets without state tags are
+                treated as fallback candidates.
+            seed (int): Reproducible seed feeding ``stable_unit``.
+            identity (str|float): Per-instance identifier (typically
+                the attachment_id) used to derive the random pick.
+        """
         candidates = self.candidates(kind, state)
         if not candidates:
             return None
@@ -94,6 +103,11 @@ def _obj_index(token, vertex_count):
 
 
 def load_obj_normalized(path):
+    """Load a Wavefront OBJ, normalize to unit height, triangulate.
+
+    Parameters:
+        path (str): Filesystem path to the .obj file.
+    """
     vertices = []
     polygon_faces = []
     with open(path, "r") as stream:

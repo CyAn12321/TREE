@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """Create a Maya polygon mesh from the pure branch graph."""
 
 from __future__ import division, print_function
@@ -6,41 +7,26 @@ import math
 import json
 
 from .core import TreeConfig, generate_tree
-
-
-def _add(a, b):
-    return tuple(a[index] + b[index] for index in range(3))
-
-
-def _sub(a, b):
-    return tuple(a[index] - b[index] for index in range(3))
-
-
-def _mul(vector, scalar):
-    return tuple(component * scalar for component in vector)
-
-
-def _dot(a, b):
-    return sum(a[index] * b[index] for index in range(3))
-
-
-def _cross(a, b):
-    return (
-        a[1] * b[2] - a[2] * b[1],
-        a[2] * b[0] - a[0] * b[2],
-        a[0] * b[1] - a[1] * b[0],
-    )
-
-
-def _normalize(vector):
-    length = math.sqrt(_dot(vector, vector))
-    if length <= 1.0e-9:
-        raise ValueError("Cannot normalize a zero-length vector")
-    return _mul(vector, 1.0 / length)
+from .math_utils import (
+    add as _add,
+    sub as _sub,
+    mul as _mul,
+    dot as _dot,
+    cross as _cross,
+    normalize_strict as _normalize,
+)
 
 
 def build_mesh_arrays(model, radial_sides=8, radius_rings=4):
-    """Return points and face topology without importing Maya."""
+    """Return points and face topology without importing Maya.
+
+    Parameters:
+        model (TreeModel): Tree model whose segments will be tessellated.
+        radial_sides (int): Cross-section vertex count per branch end.
+            Must be >= 3.
+        radius_rings (int): Number of interpolating rings along each
+            branch segment for smooth radius transitions.  Must be >= 1.
+    """
     if radial_sides < 3:
         raise ValueError("radial_sides must be at least 3")
     if radius_rings < 1:
@@ -159,12 +145,24 @@ def create_tree_in_maya(
     create_tip_locators=False,
     radius_rings=4,
 ):
-    """Generate a tree and create one Maya mesh plus optional tip locators."""
+    """Generate a tree and create one Maya mesh plus optional tip locators.
+
+    Parameters:
+        config (TreeConfig|None): Tree configuration.  Defaults to the
+            ``broadleaf_round`` preset.
+        name (str): Maya node name prefix for the generated tree root.
+        radial_sides (int): Cross-section vertex count per branch end.
+        create_tip_locators (bool): If True, add a locator at every
+            growth tip (used as flower sockets by the foliage layer).
+    """
     try:
         import maya.api.OpenMaya as om
         import maya.cmds as cmds
-    except ImportError as error:
-        raise RuntimeError("This function must run inside Maya") from error
+    except ImportError:
+        # ``raise X from Y`` is Python 3+ syntax  -  Maya's Python 2.7
+        # raises SyntaxError at import ("parse error").  Plain raise is
+        # the 2.7-compatible form.
+        raise RuntimeError("This function must run inside Maya")
 
     config = config or TreeConfig.from_preset("broadleaf_round")
     model = generate_tree(config)

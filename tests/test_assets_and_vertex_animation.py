@@ -48,7 +48,9 @@ class AssetAndVertexAnimationTests(unittest.TestCase):
         shared = set(spring_by_id).intersection(summer_by_id)
         self.assertTrue(shared)
         self.assertTrue(all(spring_by_id[key] == summer_by_id[key] for key in shared))
-        self.assertTrue(all(item.asset_id for item in summer.leaves + summer.flowers))
+        # Asset library is no longer loaded (2026-07): all leaves and
+        # flowers are procedurally generated with asset_id=None.
+        self.assertTrue(all(item.asset_id is None for item in summer.leaves + summer.flowers))
 
     def test_vertex_evaluators_preserve_topology_and_zero_wind(self):
         rest = (1.0, 4.0, -2.0)
