@@ -30,8 +30,20 @@
 在 Maya Script Editor 的 Python 页签执行：
 
 ```python
-SCRIPT_PATH = "D:/未来创新设计/TREE/launcher.py"
-exec(compile(open(SCRIPT_PATH, encoding="utf-8").read(), SCRIPT_PATH, "exec"), {"__file__": SCRIPT_PATH, "__name__": "__main__"})
+import io
+import maya.cmds as cmds
+
+SCRIPT_PATH = cmds.fileDialog2(
+    fileFilter="Python Files (*.py)",
+    dialogStyle=2,
+    fileMode=1,
+)[0]
+with io.open(SCRIPT_PATH, "r", encoding="utf-8") as script_file:
+    SCRIPT_SOURCE = script_file.read()
+exec(compile(SCRIPT_SOURCE, SCRIPT_PATH, "exec"), {
+    "__file__": SCRIPT_PATH,
+    "__name__": "__main__",
+})
 ```
 
 工具窗口中选择预设，调整参数后点击“生成树模型”。

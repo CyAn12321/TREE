@@ -7,17 +7,46 @@ import os
 import sys
 
 
-if "__file__" in globals():
-    PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-else:
-    # Maya Script Editor does not always provide ``__file__``.  Keep the
-    # fallback pointed at this repository instead of an old developer copy.
-    PROJECT_ROOT = r"D:\未来创新设计\TREE"
-
-if not os.path.isfile(os.path.join(PROJECT_ROOT, "src", "core.py")):
-    raise RuntimeError(
-        "Cannot locate the tree generator. Update PROJECT_ROOT in launcher.py."
+def _is_project_root(path):
+    return bool(path) and os.path.isfile(
+        os.path.join(path, "src", "core.py")
     )
+
+
+def _find_project_root():
+    """Find the repository without depending on a developer's drive letter.
+
+    Normally Maya executes this file with ``__file__`` available.  For code
+    pasted into the Script Editor, also accept the optional
+    ``TREE_PROJECT_ROOT`` environment variable, the current directory, and
+    entries already present on ``sys.path``.
+    """
+    candidates = []
+    script_path = globals().get("__file__")
+    if script_path:
+        candidates.append(os.path.dirname(os.path.abspath(script_path)))
+    configured_root = os.environ.get("TREE_PROJECT_ROOT")
+    if configured_root:
+        candidates.append(os.path.abspath(configured_root))
+    candidates.append(os.getcwd())
+    candidates.extend(sys.path)
+    seen = set()
+    for candidate in candidates:
+        if not candidate:
+            continue
+        candidate = os.path.abspath(candidate)
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _is_project_root(candidate):
+            return candidate
+    raise RuntimeError(
+        "Cannot locate the TREE project. Run launcher.py from the repository "
+        "or set the TREE_PROJECT_ROOT environment variable."
+    )
+
+
+PROJECT_ROOT = _find_project_root()
 
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
