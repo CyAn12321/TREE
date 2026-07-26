@@ -322,10 +322,10 @@ class WoodyFlowerTests(unittest.TestCase):
             TreeConfig.from_preset("broadleaf_round", branch_levels=3, seed=31)
         )
 
-    def test_woody_flower_specs_cover_four_species(self):
+    def test_woody_flower_specs_cover_all_species(self):
         self.assertEqual(
             set(WOODY_FLOWER_SPECS.keys()),
-            {"peach", "cherry", "pear", "plum"},
+            {"peach", "cherry", "pear", "plum", "willow"},
         )
         self.assertEqual(set(WOODY_LEAF_SPECS.keys()), set(WOODY_FLOWER_SPECS.keys()))
         for spec in WOODY_FLOWER_SPECS.values():
