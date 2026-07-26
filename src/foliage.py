@@ -458,29 +458,42 @@ WOODY_LEAF_SPECS = {
         "peach", "Peach Leaf", "lanceolate", 3.5, 0.85,
         margin_type="serrate", margin_depth=0.08,
         apex_type="acuminate", base_type="wedge",
-        # Peach leaves are the largest among the four (8-15cm).
-        leaf_size_factor=1.05,
+        # Leaf-to-flower ratio matches reality: peach leaves 8-15cm vs
+        # flowers 2.5-3.5cm (median 11.5 / 3.0 = 3.83x).  Since flowers
+        # are visually enlarged in code (flower_size_factor=1.00), leaves
+        # are scaled by the same ratio so the blossom-vs-leaf proportion
+        # reads as botanical rather than toy-like.
+        # leaf_factor = flower_factor * (real_leaf / real_flower)
+        #             = 1.00 * 3.83 = 3.83
+        # Shrink history: 75% (2.87) -> 65% (2.44) of real-ratio.
+        leaf_size_factor=2.44,
     ),
     "cherry": WoodyLeafSpec(
         "cherry", "Cherry Leaf", "ovate", 2.2, 0.65,
         margin_type="double_serrate", margin_depth=0.12,
         apex_type="caudate", base_type="wedge",
-        # Cherry leaves are medium-sized (5-12cm).
-        leaf_size_factor=0.95,
+        # Cherry leaves 4-12cm vs flowers 2-3.5cm
+        # (median 8 / 2.75 = 2.91x).  leaf_factor = 0.90 * 2.91 = 2.62.
+        # Shrink history: 75% (1.97) -> 65% (1.67) of real-ratio.
+        leaf_size_factor=1.67,
     ),
     "pear": WoodyLeafSpec(
         "pear", "Pear Leaf", "elliptic", 1.8, 0.55,
         margin_type="aristate", margin_depth=0.10,
         apex_type="acute", base_type="round",
-        # Pear leaves are medium-sized, wide and rounded (5-10cm).
-        leaf_size_factor=0.90,
+        # Pear leaves 7-12cm vs flowers 2.5-3.5cm
+        # (median 9.5 / 3.0 = 3.17x).  leaf_factor = 0.95 * 3.17 = 3.01.
+        # Shrink history: 75% (2.26) -> 65% (1.92) of real-ratio.
+        leaf_size_factor=1.92,
     ),
     "plum": WoodyLeafSpec(
         "plum", "Plum Leaf", "ovate", 2.0, 0.75,
         margin_type="serrate", margin_depth=0.07,
         apex_type="caudate", base_type="wedge",
-        # Plum leaves are the smallest of the four (4-8cm).
-        leaf_size_factor=0.78,
+        # Plum leaves 4-8cm vs flowers 2-2.5cm
+        # (median 6 / 2.25 = 2.67x).  leaf_factor = 0.85 * 2.67 = 2.27.
+        # Shrink history: 75% (1.70) -> 65% (1.45) of real-ratio.
+        leaf_size_factor=1.45,
     ),
 }
 
@@ -523,6 +536,17 @@ class FoliageConfig(object):
         max_leaves=12000,
         max_flowers=2500,
         woody_species=None,
+        # Twig (fine shoot) generation parameters (2026-07):
+        # Visible curved twigs grow from each GrowthTip and carry leaves
+        # at their ends, replacing the prior "leaves glued to main
+        # branch bark" attachment.  This fills the canopy volume with
+        # realistic fine branches whose diameter matches the botanical
+        # twig-to-leaf ratio.
+        twig_enabled=True,
+        twig_radius_ratio=0.035,
+        twig_length_ratio=2.5,
+        twig_curvature=0.35,
+        twig_leaf_ratio=0.7,
     ):
         self.season = season
         self.leaf_density_multiplier = float(leaf_density_multiplier)
@@ -541,6 +565,35 @@ class FoliageConfig(object):
         # instead of the generic round-petal flower.  None preserves the
         # legacy procedural flower used by existing tests and scenes.
         self.woody_species = woody_species if woody_species is not None else None
+        # Twig parameters:
+        #   twig_enabled       -  master switch; False restores the legacy
+        #                          "leaves on bark" attachment.
+        #   twig_radius_ratio  -  twig base RADIUS as a fraction of the
+        #                          attached leaf length.  Botanical ref:
+        #                          Rosaceae 1-yr twig RADIUS / leaf length
+        #                          ~ 0.030-0.045 (e.g. peach 3.5mm twig
+        #                          radius vs 11.5cm leaf = 0.030).  0.035
+        #                          is the visible default; the prior
+        #                          0.015 was too thin to read in render.
+        #   twig_length_ratio  -  twig length as a multiple of the
+        #                          attached leaf length (short shoots
+        #                          are 2-4 leaf-lengths long).
+        #   twig_curvature     -  sideways bend magnitude (0 = straight,
+        #                          1 = 90 deg over the length); 0.35
+        #                          gives a gentle natural arc.
+        #   twig_leaf_ratio    -  fraction of leaves placed on twigs
+        #                          (brachyblast cluster at twig tip);
+        #                          the remaining 1-ratio leaves stay on
+        #                          the main branch bark (legacy per-
+        #                          segment placement) to fill canopy
+        #                          gaps.  0.0 = all-on-bark, 1.0 =
+        #                          all-on-twig.  Only meaningful when
+        #                          twig_enabled=True.
+        self.twig_enabled = bool(twig_enabled)
+        self.twig_radius_ratio = float(twig_radius_ratio)
+        self.twig_length_ratio = float(twig_length_ratio)
+        self.twig_curvature = float(twig_curvature)
+        self.twig_leaf_ratio = max(0.0, min(1.0, float(twig_leaf_ratio)))
         self.validate()
 
     def validate(self):
@@ -551,9 +604,14 @@ class FoliageConfig(object):
             "canopy_spread_multiplier",
             "flower_density_multiplier",
             "flower_size_multiplier",
+            "twig_radius_ratio",
+            "twig_length_ratio",
+            "twig_curvature",
         ):
             if getattr(self, name) < 0.0:
                 raise ValueError("{} cannot be negative".format(name))
+        if not 0.0 <= self.twig_leaf_ratio <= 1.0:
+            raise ValueError("twig_leaf_ratio must be in [0.0, 1.0]")
         if self.samples_per_terminal_segment < 1:
             raise ValueError("samples_per_terminal_segment must be positive")
         if self.leaves_per_cluster < 1 or self.flowers_per_tip < 1:
@@ -566,6 +624,8 @@ class FoliageConfig(object):
                     self.woody_species, sorted(WOODY_FLOWER_SPECS.keys())
                 )
             )
+        if self.twig_curvature > 1.0:
+            raise ValueError("twig_curvature must be <= 1.0 (90 degrees max bend)")
 
 
 class LeafInstance(object):
@@ -692,13 +752,119 @@ class FlowerInstance(object):
         self.species = species
 
 
+class TwigInstance(object):
+    """A visible fine shoot (twig) growing from a GrowthTip.
+
+    Twigs carry leaves at their tips instead of leaves being glued
+    directly to the main branch bark.  Each twig is a slightly curved
+    tapered cylinder described by a start frame (position + tangent +
+    side + normal) and a length, so the mesh builder can tessellate it
+    with arbitrary radial/lengthwise resolution.  ``tip_index`` links
+    the twig back to the parent GrowthTip so leaves can be associated
+    with it.
+
+    Parameters:
+        tip_index (int): Index into ``TreeModel.tips`` of the parent
+            growth tip this twig grows from.
+        start (tuple): 3D position of the twig base (on the branch
+            bark surface at the tip position).
+        axis (tuple): Normalized initial direction the twig grows
+            (typically the parent tip's direction).
+        side (tuple): First radial basis vector of the start frame.
+        normal (tuple): Second radial basis vector of the start frame.
+        length (float): Total twig length in world units.
+        base_radius (float): Twig radius at the base.
+        tip_radius (float): Twig radius at the tip (after taper).
+        bend_axis (tuple): Normalized direction in the side/normal
+            plane along which the twig curves.  Curve magnitude is
+            ``bend_strength``.
+        bend_strength (float): Transverse offset of the twig tip due
+            to curvature, in world units.
+        seed (int): Stable per-twig random seed for future variation
+            (e.g. bark texture, leaf arrangement).
+    """
+
+    __slots__ = (
+        "tip_index",
+        "start",
+        "axis",
+        "side",
+        "normal",
+        "length",
+        "base_radius",
+        "tip_radius",
+        "bend_axis",
+        "bend_strength",
+        "seed",
+        "leaf_attachment_id",
+    )
+
+    def __init__(
+        self,
+        tip_index,
+        start,
+        axis,
+        side,
+        normal,
+        length,
+        base_radius,
+        tip_radius,
+        bend_axis,
+        bend_strength,
+        seed,
+        leaf_attachment_id,
+    ):
+        self.tip_index = int(tip_index)
+        self.start = start
+        self.axis = axis
+        self.side = side
+        self.normal = normal
+        self.length = float(length)
+        self.base_radius = float(base_radius)
+        self.tip_radius = float(tip_radius)
+        self.bend_axis = bend_axis
+        self.bend_strength = float(bend_strength)
+        self.seed = int(seed)
+        self.leaf_attachment_id = str(leaf_attachment_id)
+
+    def tip_position(self):
+        """Return the 3D position of the twig tip (curved end).
+
+        The curve is approximated as a single arc: the tip moves
+        forward by ``length`` along ``axis`` and sideways by
+        ``bend_strength`` along ``bend_axis``.
+        """
+        forward = _mul(self.axis, self.length)
+        bend = _mul(self.bend_axis, self.bend_strength)
+        return _add(_add(self.start, forward), bend)
+
+    def point_at(self, t):
+        """Return the 3D position at parameter ``t`` along the twig.
+
+        Parameters:
+            t (float): Curve parameter in [0, 1]; 0 = base, 1 = tip.
+                Uses the same quadratic-bend approximation as
+                ``tip_position`` so node flowers placed at intermediate
+                ``t`` follow the twig's natural arc.
+
+        Returns:
+            tuple: 3D world position at parameter ``t``.
+        """
+        forward = _mul(self.axis, self.length * t)
+        bend = _mul(self.bend_axis, self.bend_strength * t * t)
+        return _add(_add(self.start, forward), bend)
+
+
 class FoliageModel(object):
-    def __init__(self, config, profile, leaves, flowers, asset_library=None):
+    def __init__(self, config, profile, leaves, flowers, asset_library=None, twigs=None):
         self.config = config
         self.profile = profile
         self.leaves = leaves
         self.flowers = flowers
         self.asset_library = asset_library
+        # Twigs (visible fine shoots).  Empty list preserves legacy
+        # behavior when twig generation is disabled.
+        self.twigs = twigs if twigs is not None else []
 
 
 def _spread_direction(direction, rng, spread):
@@ -868,6 +1034,55 @@ LEAF_DENSITY_BY_TREE_PRESET = {
 }
 
 
+# Flower-avoidance parameters for leaf sizing (2026-07):
+# Real-world leaf-to-flower ratios are ~3x but in code flowers are
+# visually enlarged ~8x, so leaves scaled to match (3.83x for peach)
+# would be 60-90cm and completely cover the flowers.  To keep the
+# realistic distant-canopy proportion while letting individual flowers
+# read visually, leaves within ``FLOWER_AVOIDANCE_FADE_RADIUS`` of a
+# flower socket are smoothly shrunk toward ``FLOWER_AVOIDANCE_MIN_SCALE``.
+# The smoothstep fade avoids a hard "bald ring" around each flower.
+FLOWER_AVOIDANCE_CORE_RADIUS = 0.15  # fully shrunk within this distance
+FLOWER_AVOIDANCE_FADE_RADIUS = 0.35  # full size beyond this distance
+FLOWER_AVOIDANCE_MIN_SCALE = 0.40    # min size multiplier near a flower
+
+
+def _flower_avoidance_scale(leaf_position, flower_positions):
+    """Return a 0..1 leaf-size multiplier based on distance to nearest flower.
+
+    Leaves inside ``FLOWER_AVOIDANCE_CORE_RADIUS`` of any flower socket
+    are scaled down to ``FLOWER_AVOIDANCE_MIN_SCALE`` so the flower
+    reads visually; leaves beyond ``FLOWER_AVOIDANCE_FADE_RADIUS`` are
+    left at full size.  A smoothstep transition in between avoids a
+    visible ring of stunted leaves.
+
+    Parameters:
+        leaf_position (tuple): Leaf base position (xyz).
+        flower_positions (list[tuple]): All flower socket positions.
+    """
+    if not flower_positions:
+        return 1.0
+    min_dist_sq = float("inf")
+    for flower_pos in flower_positions:
+        dx = leaf_position[0] - flower_pos[0]
+        dy = leaf_position[1] - flower_pos[1]
+        dz = leaf_position[2] - flower_pos[2]
+        dist_sq = dx * dx + dy * dy + dz * dz
+        if dist_sq < min_dist_sq:
+            min_dist_sq = dist_sq
+    distance = min_dist_sq ** 0.5
+    if distance >= FLOWER_AVOIDANCE_FADE_RADIUS:
+        return 1.0
+    if distance <= FLOWER_AVOIDANCE_CORE_RADIUS:
+        return FLOWER_AVOIDANCE_MIN_SCALE
+    # Smoothstep transition between core and fade radii.
+    t = (distance - FLOWER_AVOIDANCE_CORE_RADIUS) / (
+        FLOWER_AVOIDANCE_FADE_RADIUS - FLOWER_AVOIDANCE_CORE_RADIUS
+    )
+    smooth_t = t * t * (3.0 - 2.0 * t)
+    return FLOWER_AVOIDANCE_MIN_SCALE + (1.0 - FLOWER_AVOIDANCE_MIN_SCALE) * smooth_t
+
+
 LEAF_STATE_BY_SEASON = {
     "spring": "fresh",
     "summer": "mature",
@@ -886,6 +1101,418 @@ FLOWER_STATE_BY_SEASON = {
 
 def _stable_rng(seed, identity):
     return random.Random(int(stable_unit(seed, identity, "instance") * 2147483647))
+
+
+# Botanical twig-node positions for solitary/fascicled flowers (peach,
+# plum).  Flowers emerge from lateral buds along the twig, not the apex.
+# t=0.35/0.55/0.75 spreads 2-3 nodes along the twig length, avoiding the
+# very base (looks like a trunk flower) and the very tip (apex is for
+# leaves in these species).
+_TWIG_FLOWER_NODE_T_VALUES = (0.35, 0.55, 0.75)
+
+
+# ---------------------------------------------------------------------------
+# Flower-state ratios (bud / bloom / wilt) per species and season.
+# Ratios are expressed as decimal weights that sum to 1.0.  Flowers are
+# assigned a state via weighted random draw from the species-specific
+# distribution so the canopy naturally contains all three phases
+# simultaneously (early buds, peak blooms, fading flowers).
+#
+# State morphology (openness / wilt ranges for each state):
+#   bud:    openness 0.10-0.28  (closed tight around the center)
+#           wilt     0.00-0.08  (fresh, no droop)
+#   bloom:  openness species_openness * rng(0.70, 1.0) * index_factor
+#           wilt     min(0.15, season_wilt * rng(0.5, 1.0))
+#   wilt:   openness 0.22-0.50  (partially open, petals curling inward)
+#           wilt     0.55-0.85  (clearly drooping / shriveling)
+#
+# Plum (Prunus mume, "winter plum") is the only species that blooms in
+# two seasons: an early sparse flush in winter (40% buds / 60% bloom,
+# no wilt because nothing precedes it) and the peak flush in spring
+# (10% buds / 70% bloom / 20% wilt from the winter wave fading).
+FLOWER_STATE_RATIOS = {
+    # Spring-only species: 2:7:1 (bud:bloom:wilt)
+    ("peach", "spring"):  (0.20, 0.70, 0.10),
+    ("cherry", "spring"): (0.20, 0.70, 0.10),
+    ("pear", "spring"):   (0.20, 0.70, 0.10),
+    # Plum spring: 1:7:2 (fewer buds, more fading from winter)
+    ("plum", "spring"):   (0.10, 0.70, 0.20),
+    # Plum winter: 4:6:0 (early flush, no wilt because it's the first wave)
+    ("plum", "winter"):   (0.40, 0.60, 0.00),
+}
+
+
+def _assign_flower_state(species, season, rng):
+    """Return the state label for one flower.
+
+    Draws from ``FLOWER_STATE_RATIOS`` for the given species+season via
+    a weighted random draw.  Falls back to the legacy ~10% bud behaviour
+    for unknown combinations (generic flowers, seasons without a ratio
+    entry).
+
+    Parameters:
+        species (str|None): Woody species key or None for generic.
+        season (str): Season key ("spring"/"summer"/"autumn"/"winter").
+        rng (random.Random): Stable per-flower RNG.
+
+    Returns:
+        str: ``"bud"``, ``"bloom"``, or ``"wilt"``.
+    """
+    ratios = FLOWER_STATE_RATIOS.get((species, season)) if species else None
+    if ratios is None:
+        # No ratio table entry: fall back to season-driven behaviour.
+        # Autumn/winter (high profile_wilt) -> all wilted.
+        # Summer/spring without species -> legacy ~10% bud / 90% bloom.
+        if season in ("autumn", "winter"):
+            return "wilt"
+        if rng.random() < 0.10:
+            return "bud"
+        return "bloom"
+
+    draw = rng.random()
+    bud_r, bloom_r, wilt_r = ratios
+    if draw < bud_r:
+        return "bud"
+    elif draw < bud_r + bloom_r:
+        return "bloom"
+    else:
+        return "wilt"
+
+
+def _flower_state_openness(state, local_rng, species_openness,
+                           profile_openness, profile_wilt,
+                           index=1.0):
+    """Return ``(openness, wilt)`` for a given flower state.
+
+    Parameters:
+        state (str): ``"bud"``, ``"bloom"``, or ``"wilt"``.
+        local_rng (random.Random): Per-flower stable RNG.
+        species_openness (float): Species ``WoodyFlowerSpec.openness``
+            (baseline openness for fully-bloomed flowers).
+        profile_openness (float): Season profile ``flower_openness``.
+        profile_wilt (float): Season profile ``flower_wilt``.
+        index (float): Basipetal openness index (1.0 for first flower,
+            progressively lower for later flowers on the same tip).
+    """
+    if state == "bud":
+        return local_rng.uniform(0.10, 0.28), local_rng.uniform(0.0, 0.08)
+    elif state == "bloom":
+        openness = min(
+            1.0,
+            species_openness * profile_openness
+            * local_rng.uniform(0.70, 1.0) * max(0.6, index),
+        )
+        wilt = min(0.15, profile_wilt * local_rng.uniform(0.5, 1.0))
+        return openness, wilt
+    else:  # wilt
+        return local_rng.uniform(0.22, 0.50), local_rng.uniform(0.55, 0.85)
+
+
+def _place_node_flowers_on_twig(
+    twig, twig_index, tip, quota,
+    config, profile, woody_flower_spec,
+    flowers_out,
+):
+    """Place flowers on lateral twig nodes (peach, plum pattern).
+
+    Botanical reference (Flora of China):
+      - Peach: "buds 2-3 clustered, middle leaf bud, lateral flower
+        buds"  ->  flowers emerge from lateral nodes, sessile.
+      - Plum:  "flowers 1-3, fascicled"  ->  tight cluster of 1-3
+        flowers per node, short pedicels.
+
+    Distributes ``quota`` flowers across 2-3 nodes at t=0.35/0.55/0.75
+    along the twig.  Each flower emerges perpendicular to the twig axis
+    (radial outward) so flowers read as growing from the twig sides,
+    not the apex.  Pedicel length follows the species spec (peach
+    nearly sessile, plum short).
+
+    Parameters:
+        twig (TwigInstance): Twig carrying the flowers.
+        twig_index (int): Index of the twig in the twigs list.
+        tip (GrowthTip): Parent growth tip (for source_tip field).
+        quota (int): Number of flowers to place on this twig.
+        config (FoliageConfig): Provides seed and size multipliers.
+        profile (SeasonProfile): Provides flower_size and palette.
+        woody_flower_spec (WoodyFlowerSpec): Species-specific flower
+            morphology (pedicel_ratio, droop_bias, etc.).
+        flowers_out (list): Output list to append FlowerInstance to.
+    """
+    node_count = min(len(_TWIG_FLOWER_NODE_T_VALUES), max(1, quota))
+    flowers_per_node = max(1, quota // node_count)
+    remaining = quota
+    flower_global_idx = 0
+    for node_idx in range(node_count):
+        if remaining <= 0:
+            break
+        node_t = _TWIG_FLOWER_NODE_T_VALUES[node_idx]
+        node_pos = twig.point_at(node_t)
+        node_flower_count = min(flowers_per_node, remaining)
+        for node_flower_idx in range(node_flower_count):
+            attachment_id = "twig:{}:flower{}".format(twig_index, flower_global_idx)
+            local_rng = _stable_rng(config.seed, attachment_id)
+            size = profile.flower_size * config.flower_size_multiplier
+            size *= local_rng.uniform(0.80, 1.20)
+            size *= woody_flower_spec.size_factor
+            # Golden-angle phyllotaxis around the twig axis: each flower
+            # on a node gets a radial outward direction so the cluster
+            # fans around the twig circumference.
+            golden_angle = 2.39996
+            angle = flower_global_idx * golden_angle
+            side_radius = twig.base_radius * 1.15
+            radial_offset = _add(
+                _mul(twig.side, math.cos(angle) * side_radius),
+                _mul(twig.normal, math.sin(angle) * side_radius),
+            )
+            flower_position = _add(node_pos, radial_offset)
+            # Pedicel: short for peach (sessile), short for plum.
+            peduncle_length = (
+                size * woody_flower_spec.pedicel_ratio
+                * local_rng.uniform(0.80, 1.20)
+            )
+            azimuth = local_rng.uniform(0.0, 360.0)
+            # Outward direction perpendicular to twig axis.
+            outward = _normalize(
+                _add(
+                    _mul(twig.side, math.cos(angle)),
+                    _mul(twig.normal, math.sin(angle)),
+                )
+            )
+            # Apply species-specific droop bias (peach neutral, plum neutral).
+            droop_bias = woody_flower_spec.droop_bias
+            if droop_bias != 0.0:
+                world_up = (0.0, 1.0, 0.0)
+                outward = _normalize(_add(outward, _mul(world_up, droop_bias)))
+            raw_direction = _spread_direction(outward, local_rng, 0.40)
+            # Species+season-aware state assignment (2026-07):
+            # bud / bloom / wilt per FLOWER_STATE_RATIOS.
+            state = _assign_flower_state(
+                config.woody_species, config.season, local_rng,
+            )
+            index_factor = 1.0 - 0.18 * min(flower_global_idx, 3)
+            species_openness = getattr(woody_flower_spec, "openness", 1.0)
+            flower_openness, flower_wilt = _flower_state_openness(
+                state, local_rng, species_openness,
+                profile.flower_openness, profile.flower_wilt,
+                index=index_factor,
+            )
+            flowers_out.append(
+                FlowerInstance(
+                    position=flower_position,
+                    direction=raw_direction,
+                    azimuth=azimuth,
+                    size=size,
+                    color_index=local_rng.randrange(len(profile.flower_palette)),
+                    openness=flower_openness,
+                    wilt=flower_wilt,
+                    source_tip=twig.tip_index,
+                    attachment_id=attachment_id,
+                    asset_id=None,
+                    state=FLOWER_STATE_BY_SEASON[config.season],
+                    peduncle_length=peduncle_length,
+                    species=config.woody_species,
+                )
+            )
+            flower_global_idx += 1
+            remaining -= 1
+
+
+def _place_tip_inflorescence_on_twig(
+    twig, twig_index, tip, quota,
+    config, profile, woody_flower_spec,
+    flowers_out,
+):
+    """Place flowers at the twig tip in a corymb/umbel (cherry, pear).
+
+    Botanical reference (Flora of China):
+      - Cherry: "umbel-like corymb, 3-5 flowers at branch tip, pedicel
+        1.5-3cm"  ->  flowers cluster at apex with a central peduncle
+        and long drooping pedicels.
+      - Pear:   "corymb, 6-9 flowers, mixed bud (flowers + leaves at
+        tip), pedicel 3.5-5cm"  ->  same corymb structure, erect
+        (non-drooping), more flowers.
+
+    All ``quota`` flowers start at the twig tip; the first flower sits
+    at the peduncle tip (forward of the twig apex by peduncle_ratio),
+    subsequent flowers fan out on a hemisphere via golden-angle
+    phyllotaxis.  Pedicel length and droop follow the species spec.
+
+    Parameters:
+        twig (TwigInstance): Twig carrying the flowers.
+        twig_index (int): Index of the twig in the twigs list.
+        tip (GrowthTip): Parent growth tip (for source_tip field).
+        quota (int): Number of flowers to place on this twig.
+        config (FoliageConfig): Provides seed and size multipliers.
+        profile (SeasonProfile): Provides flower_size and palette.
+        woody_flower_spec (WoodyFlowerSpec): Species-specific flower
+            morphology (pedicel_ratio, peduncle_ratio, droop_bias).
+        flowers_out (list): Output list to append FlowerInstance to.
+    """
+    twig_tip_pos = twig.tip_position()
+    tip_heading = twig.axis
+    twig_normal = twig.normal
+    for flower_idx in range(quota):
+        attachment_id = "twig:{}:flower{}".format(twig_index, flower_idx)
+        local_rng = _stable_rng(config.seed, attachment_id)
+        size = profile.flower_size * config.flower_size_multiplier
+        size *= local_rng.uniform(0.80, 1.20)
+        size *= woody_flower_spec.size_factor
+        # Start at the twig tip.
+        flower_position = twig_tip_pos
+        # Central peduncle: extend forward from the twig tip before
+        # individual pedicels fan out (corymb structure).
+        peduncle_ratio = woody_flower_spec.peduncle_ratio
+        if peduncle_ratio > 0.0:
+            peduncle_len = (
+                size * peduncle_ratio * local_rng.uniform(0.85, 1.15)
+            )
+            peduncle_tip = _add(flower_position, _mul(tip_heading, peduncle_len))
+        else:
+            peduncle_tip = flower_position
+        # First flower sits at the peduncle tip; subsequent flowers
+        # fan out on a hemisphere from there.
+        if flower_idx == 0:
+            flower_position = peduncle_tip
+        else:
+            golden_angle = 2.399963
+            fan_angle = flower_idx * golden_angle
+            fan_radius = size * 0.55 * (0.5 + 0.5 * flower_idx ** 0.5)
+            # Perpendicular frame around tip_heading.
+            perp_helper = (
+                (1.0, 0.0, 0.0)
+                if abs(tip_heading[1]) < 0.9
+                else (0.0, 0.0, 1.0)
+            )
+            perp_a = _normalize(_cross_vectors(tip_heading, perp_helper))
+            perp_b = _normalize(_cross_vectors(tip_heading, perp_a))
+            offset = _add(
+                _mul(perp_a, math.cos(fan_angle) * fan_radius),
+                _mul(perp_b, math.sin(fan_angle) * fan_radius),
+            )
+            # Slight forward offset so flowers don't clip the twig.
+            offset = _add(offset, _mul(tip_heading, size * 0.2 * flower_idx))
+            flower_position = _add(peduncle_tip, offset)
+        # Pedicel length from species spec (cherry long, pear moderate).
+        peduncle_length = (
+            size * woody_flower_spec.pedicel_ratio
+            * local_rng.uniform(0.80, 1.20)
+        )
+        azimuth = local_rng.uniform(0.0, 360.0)
+        # Base direction: along twig axis with outward radial tilt.
+        base_direction = _normalize(
+            _add(_mul(tip_heading, 0.70), _mul(twig_normal, 0.30))
+        )
+        # Species-specific droop (cherry droops down, pear faces up).
+        droop_bias = woody_flower_spec.droop_bias
+        if droop_bias != 0.0:
+            world_up = (0.0, 1.0, 0.0)
+            base_direction = _normalize(
+                _add(base_direction, _mul(world_up, droop_bias))
+            )
+        raw_direction = _spread_direction(base_direction, local_rng, 0.40)
+        # Species+season-aware state assignment (2026-07).
+        state = _assign_flower_state(
+            config.woody_species, config.season, local_rng,
+        )
+        index_factor = 1.0 - 0.18 * min(flower_idx, 3)
+        species_openness = getattr(woody_flower_spec, "openness", 1.0)
+        flower_openness, flower_wilt = _flower_state_openness(
+            state, local_rng, species_openness,
+            profile.flower_openness, profile.flower_wilt,
+            index=index_factor,
+        )
+        flowers_out.append(
+            FlowerInstance(
+                position=flower_position,
+                direction=raw_direction,
+                azimuth=azimuth,
+                size=size,
+                color_index=local_rng.randrange(len(profile.flower_palette)),
+                openness=flower_openness,
+                wilt=flower_wilt,
+                source_tip=twig.tip_index,
+                attachment_id=attachment_id,
+                asset_id=None,
+                state=FLOWER_STATE_BY_SEASON[config.season],
+                peduncle_length=peduncle_length,
+                species=config.woody_species,
+            )
+        )
+
+
+def _build_twig_for_tip(tip, tip_index, config, leaf_length_for_sizing, profile):
+    """Build a TwigInstance growing from a single GrowthTip.
+
+    The twig is a slightly curved tapered cylinder whose base sits at
+    ``tip.position`` and whose axis follows ``tip.direction`` (outward
+    from the parent branch).  Length and radius are derived from the
+    attached leaf length so the twig-to-leaf ratio stays botanical
+    even when leaves are visually enlarged.
+
+    Parameters:
+        tip (GrowthTip): Parent growth tip the twig grows from.
+        tip_index (int): Index of the tip in ``TreeModel.tips``.
+        config (FoliageConfig): Provides twig_ratio/length/curvature.
+        leaf_length_for_sizing (float): Representative leaf length in
+            world units (already includes species scale); used to size
+            the twig so the ratio is preserved.
+        profile (SeasonProfile): Season profile (currently unused but
+            kept for future season-dependent twig morphology).
+
+    Returns:
+        TwigInstance|None: A new twig, or None if the tip direction is
+            degenerate and no valid frame can be built.
+    """
+    twig_axis = _normalize(getattr(tip, "direction", (0.0, 1.0, 0.0)))
+    # Build an orthonormal frame (axis, side, normal) for tessellation.
+    helper = (0.0, 1.0, 0.0)
+    if abs(_dot(twig_axis, helper)) > 0.92:
+        helper = (1.0, 0.0, 0.0)
+    twig_side = _normalize(_cross_vectors(twig_axis, helper))
+    twig_normal = _normalize(_cross_vectors(twig_axis, twig_side))
+
+    twig_length = leaf_length_for_sizing * config.twig_length_ratio
+    # Diameter ratio is botanical; base_radius = leaf_length * ratio
+    # (ratio is already a radius fraction, not a diameter fraction).
+    twig_base_radius = leaf_length_for_sizing * config.twig_radius_ratio
+    # Taper to ~30% at the tip (botanical: twigs narrow toward apex).
+    twig_tip_radius = twig_base_radius * 0.30
+
+    # Random bend direction in the side/normal plane, magnitude scaled
+    # by curvature and twig length.  Stable per-tip seed ensures the
+    # bend is reproducible across regenerations with the same config.
+    twig_rng = _stable_rng(config.seed, "twig:{}".format(tip_index))
+    bend_angle = twig_rng.uniform(0.0, 2.0 * math.pi)
+    bend_dir = _normalize(
+        _add(
+            _mul(twig_side, math.cos(bend_angle)),
+            _mul(twig_normal, math.sin(bend_angle)),
+        )
+    )
+    # Slight downward bias: blend the random bend direction with world
+    # down so twigs tend to droop under gravity (more natural than
+    # perfectly symmetric star patterns).
+    bend_dir = _normalize(
+        _add(_mul(bend_dir, 0.75), _mul((0.0, -1.0, 0.0), 0.25))
+    )
+    twig_bend_strength = (
+        config.twig_curvature * twig_length * twig_rng.uniform(0.55, 1.0)
+    )
+
+    return TwigInstance(
+        tip_index=tip_index,
+        start=tip.position,
+        axis=twig_axis,
+        side=twig_side,
+        normal=twig_normal,
+        length=twig_length,
+        base_radius=twig_base_radius,
+        tip_radius=twig_tip_radius,
+        bend_axis=bend_dir,
+        bend_strength=twig_bend_strength,
+        seed=int(twig_rng.random() * 2147483647),
+        leaf_attachment_id="twig:{}".format(tip_index),
+    )
 
 
 def generate_foliage(tree_model, config=None):
@@ -979,345 +1606,561 @@ def generate_foliage(tree_model, config=None):
 
     leaf_sockets_by_segment = {}
     segments_by_index = {segment.index: segment for segment in tree_model.segments}
+    # Collect flower socket positions once for leaf flower-avoidance
+    # sizing.  Leaves near a flower are smoothly shrunk so the flower
+    # reads visually despite the (intentionally enlarged) leaf scale.
+    flower_positions = [
+        socket.position
+        for socket in getattr(tree_model, "attachment_points", ())
+        if socket.kind == "flower"
+    ]
     for socket in getattr(tree_model, "attachment_points", ()):
         if socket.kind == "leaf":
             leaf_sockets_by_segment.setdefault(socket.segment_index, []).append(socket)
 
-    leaf_sites = []
-    desired_leaf_counts = []
-    for segment in tree_model.segments:
-        if segment.depth < minimum_leaf_depth:
-            continue
-        direction = _sub(segment.end, segment.start)
-        sockets = leaf_sockets_by_segment.get(segment.index, ())
-        if not sockets:
-            continue
-        sockets = [
-            socket for socket in sockets
-            if preset_key == "willow_weeping" or socket.position[1] >= canopy_base
-        ]
-        if not sockets:
-            continue
-        leaf_sites.append((segment, direction, sockets))
-        quota_rng = _stable_rng(config.seed, "leaf-quota:{}".format(segment.path_id))
-        desired_leaf_counts.append(
-            _instance_copies(
-                config.samples_per_terminal_segment * config.leaves_per_cluster
-                * expected_leaf_copies,
-                quota_rng,
+    # --- Twig generation (2026-07) ---
+    # When twig_enabled, each GrowthTip grows a visible curved twig and
+    # leaves attach to the twig tip (brachyblast / short-shoot pattern)
+    # instead of being glued to the main branch bark.  This fills the
+    # canopy volume with realistic fine branches whose diameter matches
+    # the botanical twig-to-leaf ratio.
+    twigs = []
+    if config.twig_enabled:
+        # Representative leaf length used to size the twig so the
+        # twig-to-leaf ratio stays botanical even when leaves are
+        # visually enlarged.
+        leaf_length_for_sizing = profile.leaf_size * config.leaf_size_multiplier
+        if woody_leaf_spec is not None:
+            leaf_length_for_sizing *= woody_leaf_spec.leaf_size_factor
+        seen_twig_positions = set()
+        for tip_index, tip in enumerate(tree_model.tips):
+            position_key = tuple(round(v, 4) for v in tip.position)
+            if position_key in seen_twig_positions:
+                continue
+            seen_twig_positions.add(position_key)
+            if preset_key != "willow_weeping" and tip.position[1] < canopy_base:
+                continue
+            if tip.depth < minimum_leaf_depth:
+                continue
+            twig = _build_twig_for_tip(
+                tip, tip_index, config, leaf_length_for_sizing, profile
             )
-        )
+            if twig is not None:
+                twigs.append(twig)
 
-    leaf_quotas = _fair_capped_quotas(
-        desired_leaf_counts,
-        config.max_leaves,
-        rng,
+    if config.twig_enabled and twigs and config.twig_leaf_ratio > 0.0:
+        # Brachyblast leaf placement: each twig bears a cluster of
+        # leaves at its tip, distributed by golden-angle phyllotaxis
+        # so they fan out naturally rather than stacking.  The cluster
+        # size scales with ``expected_leaf_copies`` so seasons (which
+        # vary leaf_density) still affect twig leaf count  -  summer
+        # twigs carry more leaves than spring, spring more than winter.
+        #
+        # Mixed placement (2026-07): only ``twig_leaf_ratio`` fraction
+        # of the total leaf budget goes to twigs; the rest goes to the
+        # bark-placement block below so the canopy keeps a dense
+        # underlay of bark-attached leaves filling gaps between twigs.
+        # ratio=1.0 restores the prior all-on-twig behavior; ratio=0.0
+        # (or twig_enabled=False) falls through to bark-only placement.
+        twig_leaf_budget = int(config.max_leaves * config.twig_leaf_ratio)
+        leaves_per_twig = (
+            config.leaves_per_cluster
+            * config.samples_per_terminal_segment
+            * expected_leaf_copies
+        )
+        twig_leaf_quotas = _fair_capped_quotas(
+            [leaves_per_twig] * len(twigs),
+            twig_leaf_budget,
+            rng,
+        )
+        for twig_index, twig in enumerate(twigs):
+            twig_tip_pos = twig.tip_position()
+            tip = tree_model.tips[twig.tip_index]
+            for leaf_index in range(twig_leaf_quotas[twig_index]):
+                attachment_id = "{}:leaf{}".format(
+                    twig.leaf_attachment_id, leaf_index
+                )
+                local_rng = _stable_rng(config.seed, attachment_id)
+                length = profile.leaf_size * config.leaf_size_multiplier
+                length *= local_rng.uniform(0.78, 1.22)
+                if woody_leaf_spec is not None:
+                    length *= woody_leaf_spec.leaf_size_factor
+                # Phyllotaxis offset: golden-angle spiral around the
+                # twig axis distributes leaves around the twig tip.
+                golden_angle = 2.39996
+                angle = leaf_index * golden_angle
+                offset_radius = twig.base_radius * 1.5 * (
+                    0.5 + 0.5 * local_rng.random()
+                )
+                offset = _add(
+                    _mul(twig.side, math.cos(angle) * offset_radius),
+                    _mul(twig.normal, math.sin(angle) * offset_radius),
+                )
+                leaf_position = _add(twig_tip_pos, offset)
+                # Flower-avoidance shrink (flowers grow from the same
+                # tips, so leaves at twig tips would block them without
+                # this).  The shrink keeps the leaf silhouette
+                # proportional by scaling length and width together.
+                avoidance_scale = _flower_avoidance_scale(
+                    leaf_position, flower_positions
+                )
+                length *= avoidance_scale
+                petiole_length = length * local_rng.uniform(0.15, 0.30)
+                azimuth = local_rng.uniform(0.0, 360.0)
+                if woody_leaf_spec is not None:
+                    width = (
+                        length / woody_leaf_spec.length_width_ratio
+                        * local_rng.uniform(0.82, 1.18)
+                    )
+                else:
+                    width = length * leaf_width_ratio * local_rng.uniform(0.82, 1.18)
+                # Leaf direction grows outward from the twig axis with
+                # a small upward bias (phototropism) and gravity droop.
+                height_ratio = (
+                    (leaf_position[1] - canopy_base)
+                    / max(tree_height - canopy_base, 1.0e-6)
+                )
+                height_ratio = max(0.0, min(1.0, height_ratio))
+                droop_factor = 0.65 - 0.50 * height_ratio
+                droop_factor *= local_rng.uniform(0.80, 1.20)
+                vertical_bias = 0.25 * (height_ratio - 0.4)
+                outward = _normalize(
+                    _add(
+                        _add(_mul(twig.axis, 0.45), _mul(twig.normal, 0.45)),
+                        (0.0, vertical_bias, 0.0),
+                    )
+                )
+                raw_direction = _spread_direction(
+                    outward, local_rng, 0.55 + 0.30 * 0.9
+                )
+                blade_curve = local_rng.uniform(-1.0, 1.0) * 0.6
+                curl_variation = local_rng.uniform(0.5, 1.8)
+                tip_fold = (
+                    local_rng.uniform(0.35, 0.70)
+                    if local_rng.random() < 0.15
+                    else 0.0
+                )
+                has_damage = local_rng.random() < 0.08
+                leaves.append(
+                    LeafInstance(
+                        position=leaf_position,
+                        direction=raw_direction,
+                        azimuth=azimuth,
+                        length=length,
+                        width=width,
+                        color_index=local_rng.randrange(len(profile.leaf_palette)),
+                        source_segment=(
+                            tip.parent_segment
+                            if tip.parent_segment is not None
+                            else 0
+                        ),
+                        attachment_id=attachment_id,
+                        asset_id=None,
+                        state=LEAF_STATE_BY_SEASON[config.season],
+                        petiole_length=petiole_length,
+                        species=config.woody_species,
+                        droop_factor=droop_factor,
+                        blade_curve=blade_curve,
+                        curl_variation=curl_variation,
+                        tip_fold=tip_fold,
+                        has_damage=has_damage,
+                    )
+                )
+
+    # Bark-attached leaf placement: leaves attach directly to the main
+    # branch bark surface via frustum projection.  Runs in THREE cases:
+    #   1. twig_enabled=False  ->  all leaves on bark (legacy behavior,
+    #      full max_leaves budget, preserves surface-hugging tests).
+    #   2. twig_enabled=True, twig_leaf_ratio<1.0  ->  remaining budget
+    #      (max_leaves * (1-ratio)) fills canopy gaps between twigs.
+    #   3. twig_enabled=True, twig_leaf_ratio=1.0  ->  skipped (all
+    #      leaves already placed on twigs above).
+    twig_all_on_twig = (
+        config.twig_enabled
+        and bool(twigs)
+        and config.twig_leaf_ratio >= 1.0
     )
-    for site_index, site in enumerate(leaf_sites):
-        segment, direction, sockets = site
-        for leaf_index in range(leaf_quotas[site_index]):
-            socket = sockets[leaf_index % len(sockets)]
-            attachment_id = "{}:copy{}".format(socket.id, leaf_index)
-            local_rng = _stable_rng(config.seed, attachment_id)
-            length = profile.leaf_size * config.leaf_size_multiplier
-            length *= local_rng.uniform(0.78, 1.22)
-            # Species-specific leaf size scaling (2026-07):
-            # peach leaves are largest, plum smallest.
-            if woody_leaf_spec is not None:
-                length *= woody_leaf_spec.leaf_size_factor
-            # The petiole base (contact point) must lie EXACTLY on the
-            # branch bark surface via analytical frustum projection.
-            leaf_position = _project_to_branch_surface(socket, segment)
-            socket_tangent = _normalize(getattr(socket, "tangent", direction))
-            socket_exposure = float(getattr(socket, "exposure", 0.8))
-            socket_amount = float(getattr(socket, "amount", 0.5))
-            # Leaves near the branch base (low amount) are slightly larger.
-            length *= 0.85 + 0.30 * (1.0 - socket_amount)
-            petiole_length = length * local_rng.uniform(0.15, 0.30)
-            azimuth = local_rng.uniform(0.0, 360.0)
-            if woody_leaf_spec is not None:
-                # Species-accurate leaf silhouette: width derived from the
-                # botanical length/width ratio so peach leaves are long and
-                # narrow (lanceolate) while pear leaves are round (elliptic).
-                width = length / woody_leaf_spec.length_width_ratio * local_rng.uniform(0.82, 1.18)
-            else:
-                width = length * leaf_width_ratio * local_rng.uniform(0.82, 1.18)
-            # Grow along the branch heading (tangent) with a small outward
-            # radial tilt.  Visual penetration is handled by the Maya
-            # shader (depthBias + doubleSided), not by collision detection.
-            branch_heading = _normalize(getattr(segment, "heading", socket_tangent))
-            socket_normal = _normalize(getattr(socket, "normal", (0.0, 1.0, 0.0)))
-            # Gravity + phototropism: leaves in the upper canopy point
-            # more upward (light-seeking), while lower leaves droop more
-            # (shade avoidance + gravity).  The droop_factor is passed
-            # to the mesh builder for progressive blade bending.
-            height_ratio = (
-                (leaf_position[1] - canopy_base) / max(tree_height - canopy_base, 1.0e-6)
+    if not twig_all_on_twig:
+        # Bark budget: full max_leaves when no twig leaves were placed
+        # (legacy), otherwise the residual after twig leaves took their
+        # share.  This keeps the total leaf count bounded by max_leaves
+        # regardless of the twig/bark split.
+        if config.twig_enabled and twigs and config.twig_leaf_ratio > 0.0:
+            bark_leaf_budget = config.max_leaves - int(
+                config.max_leaves * config.twig_leaf_ratio
             )
-            height_ratio = max(0.0, min(1.0, height_ratio))
-            droop_factor = 0.65 - 0.50 * height_ratio  # 0.65 at bottom, 0.15 at top
-            droop_factor *= local_rng.uniform(0.80, 1.20)
-            # Vertical bias: upper leaves get an upward component, lower
-            # leaves get a downward (gravity) component.
-            vertical_bias = 0.25 * (height_ratio - 0.4)
-            base_direction = _normalize(
-                _add(
-                    _add(_mul(branch_heading, 0.65), _mul(socket_normal, 0.28)),
-                    (0.0, vertical_bias, 0.0),
+        else:
+            bark_leaf_budget = config.max_leaves
+        leaf_sites = []
+        desired_leaf_counts = []
+        for segment in tree_model.segments:
+            if segment.depth < minimum_leaf_depth:
+                continue
+            direction = _sub(segment.end, segment.start)
+            sockets = leaf_sockets_by_segment.get(segment.index, ())
+            if not sockets:
+                continue
+            sockets = [
+                socket for socket in sockets
+                if preset_key == "willow_weeping" or socket.position[1] >= canopy_base
+            ]
+            if not sockets:
+                continue
+            leaf_sites.append((segment, direction, sockets))
+            quota_rng = _stable_rng(config.seed, "leaf-quota:{}".format(segment.path_id))
+            desired_leaf_counts.append(
+                _instance_copies(
+                    config.samples_per_terminal_segment * config.leaves_per_cluster
+                    * expected_leaf_copies,
+                    quota_rng,
                 )
             )
-            raw_direction = _spread_direction(
-                base_direction, local_rng, 0.55 + 0.30 * socket_exposure
-            )
-            # Per-leaf morphological variation for naturalism:
-            # blade_curve: asymmetric lateral bend along midrib (-1..+1)
-            # curl_variation: margin curl multiplier (0.5..1.8)
-            # tip_fold: tip fold angle in radians (0 or 0.35..0.70)
-            # has_damage: ~8% of leaves have insect-damage notches
-            blade_curve = local_rng.uniform(-1.0, 1.0) * 0.6
-            curl_variation = local_rng.uniform(0.5, 1.8)
-            tip_fold = (
-                local_rng.uniform(0.35, 0.70)
-                if local_rng.random() < 0.15
-                else 0.0
-            )
-            has_damage = local_rng.random() < 0.08
-            leaves.append(
-                LeafInstance(
-                    position=leaf_position,
-                    direction=raw_direction,
-                    azimuth=azimuth,
-                    length=length,
-                    width=width,
-                    color_index=local_rng.randrange(len(profile.leaf_palette)),
-                    source_segment=segment.index,
-                    attachment_id=attachment_id,
-                    asset_id=(
-                        # All leaves are now procedurally generated;
-                        # asset_id is always None (2026-07).
-                        None
-                    ),
-                    state=LEAF_STATE_BY_SEASON[config.season],
-                    petiole_length=petiole_length,
-                    species=config.woody_species,
-                    droop_factor=droop_factor,
-                    blade_curve=blade_curve,
-                    curl_variation=curl_variation,
-                    tip_fold=tip_fold,
-                    has_damage=has_damage,
+
+        leaf_quotas = _fair_capped_quotas(
+            desired_leaf_counts,
+            bark_leaf_budget,
+            rng,
+        )
+        for site_index, site in enumerate(leaf_sites):
+            segment, direction, sockets = site
+            for leaf_index in range(leaf_quotas[site_index]):
+                socket = sockets[leaf_index % len(sockets)]
+                attachment_id = "{}:copy{}".format(socket.id, leaf_index)
+                local_rng = _stable_rng(config.seed, attachment_id)
+                length = profile.leaf_size * config.leaf_size_multiplier
+                length *= local_rng.uniform(0.78, 1.22)
+                # Species-specific leaf size scaling (2026-07):
+                # peach leaves are largest, plum smallest.
+                if woody_leaf_spec is not None:
+                    length *= woody_leaf_spec.leaf_size_factor
+                # The petiole base (contact point) must lie EXACTLY on the
+                # branch bark surface via analytical frustum projection.
+                leaf_position = _project_to_branch_surface(socket, segment)
+                socket_tangent = _normalize(getattr(socket, "tangent", direction))
+                socket_exposure = float(getattr(socket, "exposure", 0.8))
+                socket_amount = float(getattr(socket, "amount", 0.5))
+                # Leaves near the branch base (low amount) are slightly larger.
+                length *= 0.85 + 0.30 * (1.0 - socket_amount)
+                # Flower-avoidance shrink: leaves within
+                # FLOWER_AVOIDANCE_FADE_RADIUS of any flower socket are
+                # smoothly shrunk so the flower reads visually despite the
+                # enlarged leaf scale.  Both length and width (and the
+                # petiole derived from length) shrink together to keep the
+                # leaf silhouette proportional.
+                avoidance_scale = _flower_avoidance_scale(
+                    leaf_position, flower_positions
                 )
-            )
+                length *= avoidance_scale
+                petiole_length = length * local_rng.uniform(0.15, 0.30)
+                azimuth = local_rng.uniform(0.0, 360.0)
+                if woody_leaf_spec is not None:
+                    # Species-accurate leaf silhouette: width derived from the
+                    # botanical length/width ratio so peach leaves are long and
+                    # narrow (lanceolate) while pear leaves are round (elliptic).
+                    width = length / woody_leaf_spec.length_width_ratio * local_rng.uniform(0.82, 1.18)
+                else:
+                    width = length * leaf_width_ratio * local_rng.uniform(0.82, 1.18)
+                # Grow along the branch heading (tangent) with a small outward
+                # radial tilt.  Visual penetration is handled by the Maya
+                # shader (depthBias + doubleSided), not by collision detection.
+                branch_heading = _normalize(getattr(segment, "heading", socket_tangent))
+                socket_normal = _normalize(getattr(socket, "normal", (0.0, 1.0, 0.0)))
+                # Gravity + phototropism: leaves in the upper canopy point
+                # more upward (light-seeking), while lower leaves droop more
+                # (shade avoidance + gravity).  The droop_factor is passed
+                # to the mesh builder for progressive blade bending.
+                height_ratio = (
+                    (leaf_position[1] - canopy_base) / max(tree_height - canopy_base, 1.0e-6)
+                )
+                height_ratio = max(0.0, min(1.0, height_ratio))
+                droop_factor = 0.65 - 0.50 * height_ratio  # 0.65 at bottom, 0.15 at top
+                droop_factor *= local_rng.uniform(0.80, 1.20)
+                # Vertical bias: upper leaves get an upward component, lower
+                # leaves get a downward (gravity) component.
+                vertical_bias = 0.25 * (height_ratio - 0.4)
+                base_direction = _normalize(
+                    _add(
+                        _add(_mul(branch_heading, 0.65), _mul(socket_normal, 0.28)),
+                        (0.0, vertical_bias, 0.0),
+                    )
+                )
+                raw_direction = _spread_direction(
+                    base_direction, local_rng, 0.55 + 0.30 * socket_exposure
+                )
+                # Per-leaf morphological variation for naturalism:
+                # blade_curve: asymmetric lateral bend along midrib (-1..+1)
+                # curl_variation: margin curl multiplier (0.5..1.8)
+                # tip_fold: tip fold angle in radians (0 or 0.35..0.70)
+                # has_damage: ~8% of leaves have insect-damage notches
+                blade_curve = local_rng.uniform(-1.0, 1.0) * 0.6
+                curl_variation = local_rng.uniform(0.5, 1.8)
+                tip_fold = (
+                    local_rng.uniform(0.35, 0.70)
+                    if local_rng.random() < 0.15
+                    else 0.0
+                )
+                has_damage = local_rng.random() < 0.08
+                leaves.append(
+                    LeafInstance(
+                        position=leaf_position,
+                        direction=raw_direction,
+                        azimuth=azimuth,
+                        length=length,
+                        width=width,
+                        color_index=local_rng.randrange(len(profile.leaf_palette)),
+                        source_segment=segment.index,
+                        attachment_id=attachment_id,
+                        asset_id=(
+                            # All leaves are now procedurally generated;
+                            # asset_id is always None (2026-07).
+                            None
+                        ),
+                        state=LEAF_STATE_BY_SEASON[config.season],
+                        petiole_length=petiole_length,
+                        species=config.woody_species,
+                        droop_factor=droop_factor,
+                        blade_curve=blade_curve,
+                        curl_variation=curl_variation,
+                        tip_fold=tip_fold,
+                        has_damage=has_damage,
+                    )
+                )
 
     expected_flower_copies = (
         profile.flower_density
         * config.flower_density_multiplier
         * FLOWER_FACTOR_BY_TREE_PRESET.get(preset_key, 1.0)
     )
-    flower_sites = []
-    desired_flower_counts = []
-    seen_tip_positions = set()
-    expected_flowers_per_tip = (
-        woody_flower_spec.flowers_per_inflorescence * expected_flower_copies
-        if woody_flower_spec is not None
-        else config.flowers_per_tip * expected_flower_copies
-    )
     flower_socket_by_id = dict(
         (socket.id, socket)
         for socket in getattr(tree_model, "attachment_points", ())
         if socket.kind == "flower"
     )
-    for tip_index, tip in enumerate(tree_model.tips):
-        position_key = tuple(round(value, 4) for value in tip.position)
-        if position_key in seen_tip_positions:
-            continue
-        seen_tip_positions.add(position_key)
-        if preset_key != "willow_weeping" and tip.position[1] < canopy_base:
-            continue
-        # Skip tips on or near the trunk (low depth) so flowers only grow
-        # on actual branches, not on the main trunk.
-        if tip.depth < minimum_leaf_depth:
-            continue
-        socket = flower_socket_by_id.get("flower:{}".format(tip.path_id))
-        if socket is None:
-            continue
-        flower_sites.append((tip_index, tip, socket))
-        quota_rng = _stable_rng(config.seed, "flower-quota:{}".format(socket.id))
-        desired_flower_counts.append(
-            _instance_copies(expected_flowers_per_tip, quota_rng)
-        )
 
-    flower_quotas = _fair_capped_quotas(
-        desired_flower_counts,
-        config.max_flowers,
-        rng,
+    # --- Botanical flower placement (2026-07) ---
+    # When twigs are enabled and a woody species is selected, flowers
+    # grow from TWIGS (not main-branch bark) following species-specific
+    # morphology (Flora of China / eflora):
+    #   - Peach/plum (solitary/fascicled): flowers on twig NODES (along
+    #     the twig sides at t=0.35/0.55/0.75), short pedicels.  This
+    #     matches the botanical "buds 2-3 clustered, lateral flowers"
+    #     pattern: flowers emerge from lateral nodes, not the apex.
+    #   - Cherry/pear (corymbose): flowers at twig TIP in an umbel/
+    #     corymb, long pedicels fanning from a central peduncle.
+    # twig_enabled=False preserves the legacy bark-surface placement
+    # (flowers projected onto GrowthTip bark via frustum projection).
+    use_twig_flower_path = (
+        config.twig_enabled
+        and bool(twigs)
+        and woody_flower_spec is not None
+        and expected_flower_copies > 0.0
     )
-    for site_index, site in enumerate(flower_sites):
-        tip_index, tip, socket = site
-        flower_segment = segments_by_index.get(socket.segment_index)
-        for flower_index in range(flower_quotas[site_index]):
-            attachment_id = "{}:copy{}".format(socket.id, flower_index)
-            local_rng = _stable_rng(config.seed, attachment_id)
-            size = profile.flower_size * config.flower_size_multiplier
-            size *= local_rng.uniform(0.80, 1.20)
-            if woody_flower_spec is not None:
-                # Species-specific size scaling: plum blossoms are smaller,
-                # cherry blossoms slightly larger than the generic flower.
-                size *= woody_flower_spec.size_factor
-            # The pedicel base (contact point) must lie EXACTLY on the
-            # branch bark surface via analytical frustum projection.
-            if flower_segment is not None:
-                flower_position = _project_to_branch_surface(socket, flower_segment)
+
+    if use_twig_flower_path:
+        inflorescence_type = woody_flower_spec.inflorescence
+        flowers_per_twig_target = (
+            woody_flower_spec.flowers_per_inflorescence * expected_flower_copies
+        )
+        # _instance_copies handles fractional expected counts via
+        # probabilistic rounding (e.g. 0.6 -> 0 or 1 with 60% chance),
+        # matching the legacy bark-placement path.  Without this, sparse
+        # seasons (plum winter density=0.20 -> 0.6 flowers/twig) would
+        # truncate to 0 and produce no flowers at all.
+        twig_flower_desired = [
+            _instance_copies(flowers_per_twig_target, _stable_rng(config.seed, "twig-flower-quota:{}".format(idx)))
+            for idx in range(len(twigs))
+        ]
+        twig_flower_quotas = _fair_capped_quotas(
+            twig_flower_desired,
+            config.max_flowers,
+            rng,
+        )
+        for twig_index, twig in enumerate(twigs):
+            tip = tree_model.tips[twig.tip_index]
+            quota = twig_flower_quotas[twig_index]
+            if quota == 0:
+                continue
+
+            if inflorescence_type in ("solitary", "fascicled"):
+                # --- Node flowers (peach, plum) ---
+                # Botanical ref: peach "buds 2-3 clustered, middle leaf
+                # bud, lateral flower buds"; plum "flowers 1-3, fascicled".
+                # Flowers emerge from lateral nodes along the twig, not
+                # the apex.  Distribute 2-3 nodes at t=0.35/0.55/0.75 so
+                # flowers spread along the twig length.
+                _place_node_flowers_on_twig(
+                    twig, twig_index, tip, quota,
+                    config, profile, woody_flower_spec,
+                    flowers,
+                )
             else:
-                flower_position = tip.position
-            socket_tangent = _normalize(getattr(socket, "tangent", tip.direction))
-            socket_exposure = float(getattr(socket, "exposure", 1.0))
-            # Flowers on outer-facing tips open slightly more; inner ones droop.
-            openness_boost = 0.88 + 0.12 * socket_exposure
-            peduncle_length = size * local_rng.uniform(0.30, 0.60)
-            if woody_flower_spec is not None:
-                # Species-specific pedicel length from the botanical spec
-                # (cherry 1.5-3cm, plum 1-2cm, peach sessile, pear moderate).
-                peduncle_length = size * woody_flower_spec.pedicel_ratio * local_rng.uniform(0.80, 1.20)
-            azimuth = local_rng.uniform(0.0, 360.0)
-            # Grow along the branch tip direction with a small outward
-            # tilt.  Visual penetration is handled by the Maya shader.
-            tip_heading = _normalize(getattr(tip, "direction", socket_tangent))
-            socket_normal = _normalize(getattr(socket, "normal", (0.0, 1.0, 0.0)))
-            # When multiple flowers share the same tip, distribute them
-            # according to the species' inflorescence type:
-            # - solitary: no offset (only first flower, extras skipped)
-            # - fascicled: 2-3 flowers cluster tightly with short pedicels
-            # - corymbose: fan out on a hemisphere from a central peduncle
-            # - racemose: spiral along the tip heading
-            inflorescence = (
-                woody_flower_spec.inflorescence
-                if woody_flower_spec is not None
-                else "racemose"
-            )
-            # Two-level inflorescence: for corymbose species (cherry, pear),
-            # first extend a central peduncle from the branch surface, then
-            # fan out individual pedicels from the peduncle tip.  This
-            # creates the characteristic "umbel" silhouette.
-            peduncle_tip = flower_position
-            if inflorescence == "corymbose" and woody_flower_spec is not None:
-                peduncle_ratio = woody_flower_spec.peduncle_ratio
-                if peduncle_ratio > 0.0:
-                    peduncle_len = size * peduncle_ratio * local_rng.uniform(0.85, 1.15)
-                    peduncle_tip = _add(
-                        flower_position,
-                        _mul(tip_heading, peduncle_len),
-                    )
-                # The first flower (index 0) sits at the peduncle tip;
-                # subsequent flowers fan out from there.
-                if flower_index == 0:
-                    flower_position = peduncle_tip
-            if flower_index > 0:
-                if inflorescence == "corymbose":
-                    # Fan out on a hemisphere from the peduncle tip: each
-                    # flower gets a radial offset perpendicular to the tip
-                    # heading.
-                    golden_angle = 2.399963
-                    fan_angle = flower_index * golden_angle
-                    fan_radius = size * 0.55 * (0.5 + 0.5 * flower_index ** 0.5)
-                    # Build a perpendicular frame around tip_heading.
-                    perp_helper = (
-                        (1.0, 0.0, 0.0)
-                        if abs(tip_heading[1]) < 0.9
-                        else (0.0, 0.0, 1.0)
-                    )
-                    perp_a = _normalize(_cross_vectors(tip_heading, perp_helper))
-                    perp_b = _normalize(_cross_vectors(tip_heading, perp_a))
-                    offset = _add(
-                        _mul(perp_a, math.cos(fan_angle) * fan_radius),
-                        _mul(perp_b, math.sin(fan_angle) * fan_radius),
-                    )
-                    # Slight forward offset so flowers don't clip the branch.
-                    offset = _add(offset, _mul(tip_heading, size * 0.2 * flower_index))
-                    flower_position = _add(peduncle_tip, offset)
-                elif inflorescence == "fascicled":
-                    # Fascicled cluster (plum): 2-3 flowers emerge from
-                    # nearly the same point with short, slightly diverging
-                    # pedicels  -  no central peduncle, no wide fan.
-                    golden_angle = 2.399963
-                    cluster_angle = flower_index * golden_angle
-                    # Tight radius keeps the cluster compact.
-                    cluster_radius = size * 0.20 * (0.5 + 0.5 * flower_index ** 0.5)
-                    perp_helper = (
-                        (1.0, 0.0, 0.0)
-                        if abs(tip_heading[1]) < 0.9
-                        else (0.0, 0.0, 1.0)
-                    )
-                    perp_a = _normalize(_cross_vectors(tip_heading, perp_helper))
-                    perp_b = _normalize(_cross_vectors(tip_heading, perp_a))
-                    offset = _add(
-                        _mul(perp_a, math.cos(cluster_angle) * cluster_radius),
-                        _mul(perp_b, math.sin(cluster_angle) * cluster_radius),
-                    )
-                    # Very slight forward offset for each successive flower.
-                    offset = _add(offset, _mul(tip_heading, size * 0.08 * flower_index))
-                    flower_position = _add(flower_position, offset)
-                else:
-                    # Racemose / default: spiral along the tip heading.
-                    spacing = size * 0.6 * flower_index
-                    flower_position = _add(
-                        flower_position, _mul(tip_heading, spacing)
-                    )
-            base_direction = _normalize(
-                _add(_mul(tip_heading, 0.70), _mul(socket_normal, 0.30))
-            )
-            # Species-specific flower orientation (2026-07):
-            # droop_bias < 0 -> flowers nod downward (cherry)
-            # droop_bias = 0 -> neutral (peach, plum)
-            # droop_bias > 0 -> flowers face upward (pear)
-            droop_bias = woody_flower_spec.droop_bias if woody_flower_spec is not None else 0.0
-            if droop_bias != 0.0:
-                # Multiply world-up by droop_bias: negative bias adds a
-                # downward component, positive bias adds an upward one.
-                world_up = (0.0, 1.0, 0.0)
-                base_direction = _normalize(
-                    _add(base_direction, _mul(world_up, droop_bias))
+                # --- Tip inflorescence (cherry, pear) ---
+                # Botanical ref: cherry "umbel-like corymb, 3-5 flowers
+                # at branch tip"; pear "corymb, 6-9 flowers, mixed bud
+                # (flowers + leaves at tip)".  All flowers cluster at
+                # the twig tip with a central peduncle fanning out.
+                _place_tip_inflorescence_on_twig(
+                    twig, twig_index, tip, quota,
+                    config, profile, woody_flower_spec,
+                    flowers,
                 )
-            raw_direction = _spread_direction(base_direction, local_rng, 0.40)
-            # Openness gradient: wider variation range (0.55-1.0) plus
-            # a basipetal gradient (later flowers on the same tip are
-            # less open, simulating sequential blooming).  ~10% of
-            # flowers are buds (openness < 0.3).
-            is_bud = local_rng.random() < 0.10
-            if is_bud:
-                flower_openness = local_rng.uniform(0.12, 0.28)
-            else:
-                # Basipetal gradient: first flower most open, later ones less.
-                index_factor = 1.0 - 0.18 * min(flower_index, 3)
-                flower_openness = min(
-                    1.0,
-                    profile.flower_openness
-                    * local_rng.uniform(0.55, 1.0)
-                    * openness_boost
-                    * index_factor,
-                )
-            flowers.append(
-                FlowerInstance(
-                    position=flower_position,
-                    direction=raw_direction,
-                    azimuth=azimuth,
-                    size=size,
-                    color_index=local_rng.randrange(len(profile.flower_palette)),
-                    openness=flower_openness,
-                    wilt=min(
-                        1.0,
-                        profile.flower_wilt * local_rng.uniform(0.92, 1.08),
-                    ),
-                    source_tip=tip_index,
-                    attachment_id=attachment_id,
-                    asset_id=(
-                        # All flowers are now procedurally generated;
-                        # asset_id is always None (2026-07).
-                        None
-                    ),
-                    state=FLOWER_STATE_BY_SEASON[config.season],
-                    peduncle_length=peduncle_length,
-                    species=config.woody_species,
-                )
+    else:
+        # --- Legacy bark-surface flower placement ---
+        # Flowers attach to GrowthTip bark via frustum projection.  Used
+        # when twig_enabled=False (preserves original behavior and the
+        # willow flower-coverage regression test) or when no woody
+        # species is selected (generic procedural flowers).
+        flower_sites = []
+        desired_flower_counts = []
+        seen_tip_positions = set()
+        expected_flowers_per_tip = (
+            woody_flower_spec.flowers_per_inflorescence * expected_flower_copies
+            if woody_flower_spec is not None
+            else config.flowers_per_tip * expected_flower_copies
+        )
+        for tip_index, tip in enumerate(tree_model.tips):
+            position_key = tuple(round(value, 4) for value in tip.position)
+            if position_key in seen_tip_positions:
+                continue
+            seen_tip_positions.add(position_key)
+            if preset_key != "willow_weeping" and tip.position[1] < canopy_base:
+                continue
+            # Skip tips on or near the trunk (low depth) so flowers only grow
+            # on actual branches, not on the main trunk.
+            if tip.depth < minimum_leaf_depth:
+                continue
+            socket = flower_socket_by_id.get("flower:{}".format(tip.path_id))
+            if socket is None:
+                continue
+            flower_sites.append((tip_index, tip, socket))
+            quota_rng = _stable_rng(config.seed, "flower-quota:{}".format(socket.id))
+            desired_flower_counts.append(
+                _instance_copies(expected_flowers_per_tip, quota_rng)
             )
 
-    return FoliageModel(config, profile, leaves, flowers, None)
+        flower_quotas = _fair_capped_quotas(
+            desired_flower_counts,
+            config.max_flowers,
+            rng,
+        )
+        for site_index, site in enumerate(flower_sites):
+            tip_index, tip, socket = site
+            flower_segment = segments_by_index.get(socket.segment_index)
+            for flower_index in range(flower_quotas[site_index]):
+                attachment_id = "{}:copy{}".format(socket.id, flower_index)
+                local_rng = _stable_rng(config.seed, attachment_id)
+                size = profile.flower_size * config.flower_size_multiplier
+                size *= local_rng.uniform(0.80, 1.20)
+                if woody_flower_spec is not None:
+                    size *= woody_flower_spec.size_factor
+                # The pedicel base (contact point) must lie EXACTLY on the
+                # branch bark surface via analytical frustum projection.
+                if flower_segment is not None:
+                    flower_position = _project_to_branch_surface(socket, flower_segment)
+                else:
+                    flower_position = tip.position
+                socket_tangent = _normalize(getattr(socket, "tangent", tip.direction))
+                socket_exposure = float(getattr(socket, "exposure", 1.0))
+                openness_boost = 0.88 + 0.12 * socket_exposure
+                peduncle_length = size * local_rng.uniform(0.30, 0.60)
+                if woody_flower_spec is not None:
+                    peduncle_length = size * woody_flower_spec.pedicel_ratio * local_rng.uniform(0.80, 1.20)
+                azimuth = local_rng.uniform(0.0, 360.0)
+                tip_heading = _normalize(getattr(tip, "direction", socket_tangent))
+                socket_normal = _normalize(getattr(socket, "normal", (0.0, 1.0, 0.0)))
+                inflorescence = (
+                    woody_flower_spec.inflorescence
+                    if woody_flower_spec is not None
+                    else "racemose"
+                )
+                peduncle_tip = flower_position
+                if inflorescence == "corymbose" and woody_flower_spec is not None:
+                    peduncle_ratio = woody_flower_spec.peduncle_ratio
+                    if peduncle_ratio > 0.0:
+                        peduncle_len = size * peduncle_ratio * local_rng.uniform(0.85, 1.15)
+                        peduncle_tip = _add(
+                            flower_position,
+                            _mul(tip_heading, peduncle_len),
+                        )
+                    if flower_index == 0:
+                        flower_position = peduncle_tip
+                if flower_index > 0:
+                    if inflorescence == "corymbose":
+                        golden_angle = 2.399963
+                        fan_angle = flower_index * golden_angle
+                        fan_radius = size * 0.55 * (0.5 + 0.5 * flower_index ** 0.5)
+                        perp_helper = (
+                            (1.0, 0.0, 0.0)
+                            if abs(tip_heading[1]) < 0.9
+                            else (0.0, 0.0, 1.0)
+                        )
+                        perp_a = _normalize(_cross_vectors(tip_heading, perp_helper))
+                        perp_b = _normalize(_cross_vectors(tip_heading, perp_a))
+                        offset = _add(
+                            _mul(perp_a, math.cos(fan_angle) * fan_radius),
+                            _mul(perp_b, math.sin(fan_angle) * fan_radius),
+                        )
+                        offset = _add(offset, _mul(tip_heading, size * 0.2 * flower_index))
+                        flower_position = _add(peduncle_tip, offset)
+                    elif inflorescence == "fascicled":
+                        golden_angle = 2.399963
+                        cluster_angle = flower_index * golden_angle
+                        cluster_radius = size * 0.20 * (0.5 + 0.5 * flower_index ** 0.5)
+                        perp_helper = (
+                            (1.0, 0.0, 0.0)
+                            if abs(tip_heading[1]) < 0.9
+                            else (0.0, 0.0, 1.0)
+                        )
+                        perp_a = _normalize(_cross_vectors(tip_heading, perp_helper))
+                        perp_b = _normalize(_cross_vectors(tip_heading, perp_a))
+                        offset = _add(
+                            _mul(perp_a, math.cos(cluster_angle) * cluster_radius),
+                            _mul(perp_b, math.sin(cluster_angle) * cluster_radius),
+                        )
+                        offset = _add(offset, _mul(tip_heading, size * 0.08 * flower_index))
+                        flower_position = _add(flower_position, offset)
+                    else:
+                        spacing = size * 0.6 * flower_index
+                        flower_position = _add(
+                            flower_position, _mul(tip_heading, spacing)
+                        )
+                base_direction = _normalize(
+                    _add(_mul(tip_heading, 0.70), _mul(socket_normal, 0.30))
+                )
+                droop_bias = woody_flower_spec.droop_bias if woody_flower_spec is not None else 0.0
+                if droop_bias != 0.0:
+                    world_up = (0.0, 1.0, 0.0)
+                    base_direction = _normalize(
+                        _add(base_direction, _mul(world_up, droop_bias))
+                    )
+                raw_direction = _spread_direction(base_direction, local_rng, 0.40)
+                # Species+season-aware state assignment (2026-07).
+                state = _assign_flower_state(
+                    config.woody_species, config.season, local_rng,
+                )
+                index_factor = (1.0 - 0.18 * min(flower_index, 3)) * openness_boost
+                species_openness = getattr(woody_flower_spec, "openness", 1.0)
+                flower_openness, flower_wilt = _flower_state_openness(
+                    state, local_rng, species_openness,
+                    profile.flower_openness, profile.flower_wilt,
+                    index=index_factor,
+                )
+                flowers.append(
+                    FlowerInstance(
+                        position=flower_position,
+                        direction=raw_direction,
+                        azimuth=azimuth,
+                        size=size,
+                        color_index=local_rng.randrange(len(profile.flower_palette)),
+                        openness=flower_openness,
+                        wilt=flower_wilt,
+                        source_tip=tip_index,
+                        attachment_id=attachment_id,
+                        asset_id=None,
+                        state=FLOWER_STATE_BY_SEASON[config.season],
+                        peduncle_length=peduncle_length,
+                        species=config.woody_species,
+                    )
+                )
+
+    return FoliageModel(config, profile, leaves, flowers, None, twigs=twigs)

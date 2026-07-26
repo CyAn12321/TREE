@@ -13,12 +13,17 @@ if PROJECT_ROOT not in sys.path:
 from src.core import TreeConfig, generate_tree
 from src.foliage import (
     FoliageConfig,
+    TwigInstance,
     WOODY_FLOWER_SPECS,
     WOODY_LEAF_SPECS,
     generate_foliage,
     get_season,
 )
-from src.maya_foliage import build_flower_mesh_groups, build_leaf_mesh_groups
+from src.maya_foliage import (
+    build_flower_mesh_groups,
+    build_leaf_mesh_groups,
+    build_twig_mesh_arrays,
+)
 
 
 class SeasonalFoliageTests(unittest.TestCase):
@@ -68,6 +73,9 @@ class SeasonalFoliageTests(unittest.TestCase):
         self.assertEqual(len(winter.flowers), 0)
 
     def test_size_multipliers_change_geometry_scale(self):
+        # twig_enabled=False isolates the size-scaling math from the
+        # twig-length feedback loop (twig length depends on leaf_size,
+        # which changes leaf position, which changes avoidance scale).
         small = generate_foliage(
             self.tree,
             FoliageConfig(
@@ -75,6 +83,7 @@ class SeasonalFoliageTests(unittest.TestCase):
                 leaf_size_multiplier=0.5,
                 flower_size_multiplier=0.5,
                 seed=19,
+                twig_enabled=False,
             ),
         )
         large = generate_foliage(
@@ -84,6 +93,7 @@ class SeasonalFoliageTests(unittest.TestCase):
                 leaf_size_multiplier=1.5,
                 flower_size_multiplier=1.5,
                 seed=19,
+                twig_enabled=False,
             ),
         )
         self.assertAlmostEqual(large.leaves[0].length, small.leaves[0].length * 3.0)
@@ -121,10 +131,12 @@ class SeasonalFoliageTests(unittest.TestCase):
     def test_foliage_hugs_branch_surface_within_small_jitter(self):
         # Leaves should sit on the branch bark surface (center + radius *
         # normal) with only a tiny natural wiggle (<= 0.2 units), not float
-        # inside the wood or in a canopy cloud.
+        # inside the wood or in a canopy cloud.  twig_enabled=False keeps
+        # the legacy bark-attached leaf placement; with twigs, leaves move
+        # to twig tips and the surface-hugging assertion no longer applies.
         foliage_model = generate_foliage(
             self.tree,
-            FoliageConfig(season="summer", seed=44),
+            FoliageConfig(season="summer", seed=44, twig_enabled=False),
         )
         segments_by_index = {s.index: s for s in self.tree.segments}
         sockets_by_id = {
@@ -165,12 +177,16 @@ class SeasonalFoliageTests(unittest.TestCase):
         self.assertLess(max_offset, 0.2)
 
     def test_leaf_cap_is_shared_across_willow_branches(self):
+        # twig_enabled=False preserves the legacy per-segment leaf
+        # distribution that saturates max_leaves; with twigs, leaves
+        # come only from GrowthTips (far fewer sources) so the cap is
+        # not reached.
         willow = generate_tree(
             TreeConfig.from_preset("willow_weeping", seed=17)
         )
         foliage_model = generate_foliage(
             willow,
-            FoliageConfig(season="summer", seed=118),
+            FoliageConfig(season="summer", seed=118, twig_enabled=False),
         )
         covered_segments = {
             leaf.source_segment for leaf in foliage_model.leaves
@@ -181,6 +197,9 @@ class SeasonalFoliageTests(unittest.TestCase):
     def test_non_round_presets_keep_foliage_anchored_to_branches(self):
         # All presets should keep leaves on the branch bark surface,
         # not floating in a volume cloud away from the branch skeleton.
+        # twig_enabled=False keeps the legacy bark-attached placement;
+        # with twigs, leaves move to twig tips and this assertion no
+        # longer applies.
         for preset_key in (
             "conifer_pyramidal",
             "willow_weeping",
@@ -189,7 +208,7 @@ class SeasonalFoliageTests(unittest.TestCase):
             tree = generate_tree(TreeConfig.from_preset(preset_key, seed=17))
             foliage_model = generate_foliage(
                 tree,
-                FoliageConfig(season="summer", seed=118),
+                FoliageConfig(season="summer", seed=118, twig_enabled=False),
             )
             segments_by_index = {s.index: s for s in tree.segments}
             sockets_by_id = {
@@ -605,6 +624,464 @@ class WoodyFlowerTests(unittest.TestCase):
             ),
         )
         self.assertGreater(len(plum_spring.flowers), len(plum_winter.flowers))
+
+    def test_leaves_near_flowers_are_shrunk_by_avoidance(self):
+        """Leaves within the flower-avoidance radius must be visibly smaller.
+
+        The flower-avoidance feature shrinks leaves near each flower
+        socket so the (intentionally enlarged) leaves do not visually
+        bury the blossoms.  We verify this by comparing the average
+        leaf length of leaves within the avoidance core radius against
+        those well outside the fade radius  -  the near-flower leaves
+        must be substantially smaller.
+        """
+        from src.foliage import (
+            FLOWER_AVOIDANCE_CORE_RADIUS,
+            FLOWER_AVOIDANCE_FADE_RADIUS,
+            FLOWER_AVOIDANCE_MIN_SCALE,
+            _flower_avoidance_scale,
+        )
+
+        # Sanity-check the scale function directly.
+        flower_pos = (1.0, 2.0, 3.0)
+        self.assertEqual(
+            _flower_avoidance_scale(flower_pos, [flower_pos]),
+            FLOWER_AVOIDANCE_MIN_SCALE,
+        )
+        far_pos = (
+            flower_pos[0] + FLOWER_AVOIDANCE_FADE_RADIUS + 0.5,
+            flower_pos[1],
+            flower_pos[2],
+        )
+        self.assertEqual(_flower_avoidance_scale(far_pos, [flower_pos]), 1.0)
+        # Empty flower list -> no avoidance.
+        self.assertEqual(_flower_avoidance_scale(flower_pos, []), 1.0)
+
+        # End-to-end: use a woody species so leaf_size_factor is the
+        # enlarged real-ratio value (>2.0).  Spring gives the most
+        # flowers so the avoidance effect is measurable.  twig_enabled
+        # =False keeps leaves on the branch bark next to flowers so
+        # the avoidance scaling is actually exercised (with twigs,
+        # leaves sit at twig tips far from flowers and avoidance is
+        # not triggered).
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(
+                season="spring", seed=42, woody_species="peach",
+                twig_enabled=False,
+            ),
+        )
+        flower_positions = [
+            (flower.position[0], flower.position[1], flower.position[2])
+            for flower in foliage_model.flowers
+        ]
+        self.assertGreater(len(flower_positions), 0)
+
+        # Classify leaves by distance to nearest flower.
+        near_lengths = []
+        far_lengths = []
+        for leaf in foliage_model.leaves:
+            lx, ly, lz = leaf.position
+            min_dist = min(
+                ((lx - fx) ** 2 + (ly - fy) ** 2 + (lz - fz) ** 2) ** 0.5
+                for fx, fy, fz in flower_positions
+            )
+            # leaf.length is the blade length after all scaling.
+            if min_dist <= FLOWER_AVOIDANCE_CORE_RADIUS:
+                near_lengths.append(leaf.length)
+            elif min_dist >= FLOWER_AVOIDANCE_FADE_RADIUS:
+                far_lengths.append(leaf.length)
+
+        # We need enough samples on both sides for a meaningful mean.
+        self.assertGreater(
+            len(near_lengths), 0,
+            "expected at least one leaf near a flower",
+        )
+        self.assertGreater(
+            len(far_lengths), 0,
+            "expected at least one leaf far from any flower",
+        )
+        near_mean = sum(near_lengths) / len(near_lengths)
+        far_mean = sum(far_lengths) / len(far_lengths)
+        # Near-flower leaves should be substantially smaller than far
+        # ones.  The theoretical ratio is FLOWER_AVOIDANCE_MIN_SCALE
+        # (0.40) at the very core, but the near bucket includes the
+        # smoothstep transition zone so we use a looser threshold.
+        self.assertLess(
+            near_mean, far_mean * 0.75,
+            "near-flower leaves (mean={:.3f}) should be <75% of far "
+            "leaves (mean={:.3f})".format(near_mean, far_mean),
+        )
+
+
+class TwigGenerationTests(unittest.TestCase):
+    """Dedicated tests for the visible twig (fine shoot) system.
+
+    These tests cover the twig-enabled path of ``generate_foliage``:
+    one curved twig per GrowthTip, leaves at twig tips, botanical
+    radius ratio, and the twig mesh topology.  The legacy per-segment
+    leaf path is covered by the surface-hugging tests above (which
+    pass ``twig_enabled=False``).
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tree = generate_tree(
+            TreeConfig.from_preset("broadleaf_round", branch_levels=3, seed=31)
+        )
+
+    def test_twig_enabled_produces_twig_instances(self):
+        # Default config has twig_enabled=True; verify twigs are built.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(season="summer", seed=44),
+        )
+        self.assertGreater(len(foliage_model.twigs), 0)
+        for twig in foliage_model.twigs:
+            self.assertIsInstance(twig, TwigInstance)
+            # Twig base must sit at a GrowthTip position.
+            self.assertEqual(len(twig.start), 3)
+            # Twig length and radii must be positive.
+            self.assertGreater(twig.length, 0.0)
+            self.assertGreater(twig.base_radius, 0.0)
+            self.assertGreater(twig.tip_radius, 0.0)
+            # Tip radius is tapered (smaller than base).
+            self.assertLess(twig.tip_radius, twig.base_radius)
+
+    def test_twig_disabled_produces_no_twigs(self):
+        # twig_enabled=False restores the legacy behavior: no twigs.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(season="summer", seed=44, twig_enabled=False),
+        )
+        self.assertEqual(len(foliage_model.twigs), 0)
+
+    def test_twig_count_matches_eligible_growth_tips(self):
+        # Each eligible GrowthTip grows exactly one twig.  Compute the
+        # expected count by replicating the canopy_base + depth filter.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(season="summer", seed=44),
+        )
+        minimum_bounds, maximum_bounds = self.tree.bounds()
+        tree_height = maximum_bounds[1] - minimum_bounds[1]
+        canopy_base = minimum_bounds[1] + tree_height * 0.18
+        maximum_depth = self.tree.maximum_depth()
+        minimum_leaf_depth = max(0, maximum_depth - 2)
+        seen = set()
+        expected = 0
+        for tip in self.tree.tips:
+            key = tuple(round(v, 4) for v in tip.position)
+            if key in seen:
+                continue
+            seen.add(key)
+            if tip.position[1] < canopy_base:
+                continue
+            if tip.depth < minimum_leaf_depth:
+                continue
+            expected += 1
+        self.assertEqual(len(foliage_model.twigs), expected)
+
+    def test_twig_radius_matches_botanical_ratio(self):
+        # Twig base radius = leaf_length * twig_radius_ratio.  With the
+        # default ratio 0.035 (visible default, 2026-07), verify the
+        # actual ratio on generated twigs stays within tolerance of the
+        # configured value.
+        config = FoliageConfig(
+            season="spring", seed=42, woody_species="peach",
+            twig_enabled=True, twig_radius_ratio=0.035,
+        )
+        foliage_model = generate_foliage(self.tree, config)
+        self.assertGreater(len(foliage_model.twigs), 0)
+        # Representative leaf length used to size twigs.
+        profile = get_season("spring")
+        leaf_length = profile.leaf_size * config.leaf_size_multiplier
+        leaf_length *= WOODY_LEAF_SPECS["peach"].leaf_size_factor
+        for twig in foliage_model.twigs:
+            ratio = twig.base_radius / leaf_length
+            self.assertAlmostEqual(ratio, 0.035, places=3)
+
+    def test_twig_leaf_attachment_ids_differ_from_legacy(self):
+        # Twig leaves use "twig:N:leafM" ids; legacy leaves use
+        # "leaf:...:copyN".  With the default twig_leaf_ratio=0.7,
+        # verify BOTH attachment kinds coexist (mixed placement):
+        # the majority on twigs, the remainder on bark.  ratio=1.0
+        # is exercised by the dedicated all-on-twig test below.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(season="summer", seed=44, twig_enabled=True),
+        )
+        twig_leaf_count = sum(
+            1 for leaf in foliage_model.leaves
+            if leaf.attachment_id.startswith("twig:")
+        )
+        bark_leaf_count = len(foliage_model.leaves) - twig_leaf_count
+        self.assertGreater(twig_leaf_count, 0)
+        self.assertGreater(bark_leaf_count, 0)
+
+    def test_twig_leaf_ratio_one_places_all_leaves_on_twigs(self):
+        # twig_leaf_ratio=1.0 restores the prior all-on-twig behavior:
+        # every leaf carries a "twig:" attachment id and no leaf sits
+        # on the main branch bark.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(
+                season="summer", seed=44,
+                twig_enabled=True, twig_leaf_ratio=1.0,
+            ),
+        )
+        twig_leaf_count = sum(
+            1 for leaf in foliage_model.leaves
+            if leaf.attachment_id.startswith("twig:")
+        )
+        self.assertEqual(twig_leaf_count, len(foliage_model.leaves))
+
+    def test_twig_leaf_ratio_zero_places_all_leaves_on_bark(self):
+        # twig_leaf_ratio=0.0 with twig_enabled=True: twigs are still
+        # generated (visible fine shoots) but NO leaves attach to them;
+        # all leaves go to the bark-placement path.  This decouples
+        # twig visibility from leaf placement.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(
+                season="summer", seed=44,
+                twig_enabled=True, twig_leaf_ratio=0.0,
+            ),
+        )
+        # Twigs exist (visibility is independent of leaf placement).
+        self.assertGreater(len(foliage_model.twigs), 0)
+        # No leaf carries a twig: prefix; all are bark-attached.
+        twig_leaf_count = sum(
+            1 for leaf in foliage_model.leaves
+            if leaf.attachment_id.startswith("twig:")
+        )
+        self.assertEqual(twig_leaf_count, 0)
+
+    def test_twig_mesh_arrays_have_expected_topology(self):
+        # Each twig: (rings+1) rings * segments vertices + 1 base cap
+        # vertex = 7*8+1 = 57 vertices.  Faces: segments base cap
+        # triangles + rings*segments*2 side triangles = 8 + 6*8*2 = 104.
+        # Connects: 3 * faces = 312.  (Updated 2026-07: segments 6->8,
+        # rings 4->6 for smoother visible twigs at the larger radius.)
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(season="summer", seed=44),
+        )
+        arrays = build_twig_mesh_arrays(foliage_model)
+        self.assertIn(0, arrays)
+        points, counts, connects = arrays[0]
+        twig_count = len(foliage_model.twigs)
+        self.assertEqual(len(points), twig_count * 57)
+        self.assertEqual(len(counts), twig_count * 104)
+        self.assertEqual(len(connects), twig_count * 312)
+
+    def test_twigs_reproducible_with_same_seed(self):
+        # Same seed must produce identical twig geometry.
+        first = generate_foliage(
+            self.tree,
+            FoliageConfig(season="summer", seed=77),
+        )
+        second = generate_foliage(
+            self.tree,
+            FoliageConfig(season="summer", seed=77),
+        )
+        self.assertEqual(
+            [(t.start, t.length, t.base_radius) for t in first.twigs],
+            [(t.start, t.length, t.base_radius) for t in second.twigs],
+        )
+
+    def test_twig_curvature_affects_tip_position(self):
+        # Non-zero curvature should offset the tip sideways from the
+        # straight-axis endpoint.  Verify the tip is NOT at
+        # start + axis * length.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(season="summer", seed=44, twig_curvature=0.5),
+        )
+        for twig in foliage_model.twigs:
+            straight_tip = (
+                twig.start[0] + twig.axis[0] * twig.length,
+                twig.start[1] + twig.axis[1] * twig.length,
+                twig.start[2] + twig.axis[2] * twig.length,
+            )
+            actual_tip = twig.tip_position()
+            # The bend should move the tip away from the straight-line
+            # endpoint by roughly bend_strength (curvature * length).
+            offset = (
+                (actual_tip[0] - straight_tip[0]) ** 2
+                + (actual_tip[1] - straight_tip[1]) ** 2
+                + (actual_tip[2] - straight_tip[2]) ** 2
+            ) ** 0.5
+            self.assertGreater(offset, 0.0)
+
+
+class TwigFlowerPlacementTests(unittest.TestCase):
+    """Verify botanical flower-on-twig placement (2026-07).
+
+    When twig_enabled=True and a woody species is selected, flowers must
+    grow from twigs following species-specific morphology:
+      - Peach/plum (solitary/fascicled): flowers on twig NODES (along
+        the sides at t=0.35/0.55/0.75), not the apex.
+      - Cherry/pear (corymbose): flowers at twig TIP in an umbel/corymb.
+    twig_enabled=False preserves the legacy bark-surface placement.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tree = generate_tree(
+            TreeConfig.from_preset("broadleaf_round", branch_levels=3, seed=31)
+        )
+
+    def test_flowers_attach_to_twigs_when_enabled(self):
+        # With twigs enabled, flowers must carry "twig:" attachment ids
+        # (not the legacy "flower:...:copyN" bark ids).  This confirms
+        # the new botanical path is exercised.
+        for species in ("peach", "cherry", "pear", "plum"):
+            foliage_model = generate_foliage(
+                self.tree,
+                FoliageConfig(
+                    season="spring", seed=42, woody_species=species,
+                    flower_density_multiplier=3.0,
+                ),
+            )
+            self.assertGreater(len(foliage_model.flowers), 0, species)
+            for flower in foliage_model.flowers:
+                self.assertTrue(
+                    flower.attachment_id.startswith("twig:"),
+                    "{} flower should attach to twig, got {}".format(
+                        species, flower.attachment_id
+                    ),
+                )
+
+    def test_twig_disabled_preserves_bark_flower_attachment(self):
+        # twig_enabled=False: flowers keep the legacy "flower:...:copyN"
+        # bark-surface attachment ids (regression guard for the willow
+        # flower-coverage test path).
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(
+                season="spring", seed=42, woody_species="peach",
+                flower_density_multiplier=3.0,
+                twig_enabled=False,
+            ),
+        )
+        self.assertGreater(len(foliage_model.flowers), 0)
+        for flower in foliage_model.flowers:
+            self.assertTrue(
+                flower.attachment_id.startswith("flower:"),
+                "twig-disabled flower should attach to bark, got {}".format(
+                    flower.attachment_id
+                ),
+            )
+
+    def test_peach_flowers_grow_from_twig_nodes_not_apex(self):
+        # Peach (solitary): flowers emerge from lateral nodes at
+        # t=0.35/0.55/0.75, NOT from the twig apex (t=1.0).  Verify by
+        # checking that flower positions are NOT clustered at the tip
+        # endpoint  -  at least one flower sits at a node position
+        # closer to the base than the apex.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(
+                season="spring", seed=42, woody_species="peach",
+                flower_density_multiplier=5.0,
+            ),
+        )
+        self.assertGreater(len(foliage_model.flowers), 0)
+        # Build a set of twig tip positions for comparison.
+        twig_tip_positions = set()
+        for twig in foliage_model.twigs:
+            tip = twig.tip_position()
+            twig_tip_positions.add(
+                tuple(round(value, 3) for value in tip)
+            )
+        # At least one flower should NOT be at a twig tip (it's on a
+        # lateral node instead).
+        node_flower_count = 0
+        for flower in foliage_model.flowers:
+            flower_key = tuple(round(value, 3) for value in flower.position)
+            if flower_key not in twig_tip_positions:
+                node_flower_count += 1
+        self.assertGreater(
+            node_flower_count, 0,
+            "peach flowers should include node-placed (not all at tips)",
+        )
+
+    def test_cherry_flowers_cluster_at_twig_tips(self):
+        # Cherry (corymbose): flowers cluster at the twig tip in an
+        # umbel.  Verify the majority of flowers sit NEAR a twig tip
+        # (within the corymb radius), unlike peach which spreads along
+        # lateral nodes.
+        foliage_model = generate_foliage(
+            self.tree,
+            FoliageConfig(
+                season="spring", seed=42, woody_species="cherry",
+                flower_density_multiplier=5.0,
+            ),
+        )
+        self.assertGreater(len(foliage_model.flowers), 0)
+        tip_positions = [twig.tip_position() for twig in foliage_model.twigs]
+        near_tip_count = 0
+        for flower in foliage_model.flowers:
+            for tip_pos in tip_positions:
+                distance = (
+                    (flower.position[0] - tip_pos[0]) ** 2
+                    + (flower.position[1] - tip_pos[1]) ** 2
+                    + (flower.position[2] - tip_pos[2]) ** 2
+                ) ** 0.5
+                # Cherry corymb: peduncle_ratio=0.35 (forward) +
+                # pedicel_ratio=0.55 (radial) + fan_radius up to ~0.55*size
+                # = total up to ~1.45*size from the tip.  Use 2.5x size
+                # as the "near tip" threshold to capture the full corymb
+                # fan-out without being so loose that node-placed peach
+                # flowers would also pass.
+                if distance < flower.size * 2.5:
+                    near_tip_count += 1
+                    break
+        # At least 40% of cherry flowers should be near a tip.  The
+        # threshold is deliberately below 50% because the corymb fan-out
+        # plus peduncle forward extension can push some flowers past the
+        # 2.5x threshold, and we only need to distinguish from peach's
+        # node-spread pattern (where most flowers are far from any tip).
+        self.assertGreater(
+            near_tip_count, len(foliage_model.flowers) * 2 // 5,
+            "cherry flowers should cluster near twig tips",
+        )
+
+    def test_node_flower_count_scales_with_density(self):
+        # Higher flower_density_multiplier should produce more flowers
+        # on twigs (the new path respects the density budget just like
+        # the legacy path).
+        sparse = generate_foliage(
+            self.tree,
+            FoliageConfig(
+                season="spring", seed=42, woody_species="peach",
+                flower_density_multiplier=1.0,
+            ),
+        )
+        dense = generate_foliage(
+            self.tree,
+            FoliageConfig(
+                season="spring", seed=42, woody_species="peach",
+                flower_density_multiplier=5.0,
+            ),
+        )
+        self.assertGreater(len(dense.flowers), len(sparse.flowers))
+
+    def test_flower_placement_is_reproducible(self):
+        # Same seed -> identical flower positions (stable RNG contract).
+        first = generate_foliage(
+            self.tree,
+            FoliageConfig(season="spring", seed=42, woody_species="cherry"),
+        )
+        second = generate_foliage(
+            self.tree,
+            FoliageConfig(season="spring", seed=42, woody_species="cherry"),
+        )
+        self.assertEqual(
+            [(f.position, f.size) for f in first.flowers],
+            [(f.position, f.size) for f in second.flowers],
+        )
 
 
 if __name__ == "__main__":
