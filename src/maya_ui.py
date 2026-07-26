@@ -327,6 +327,21 @@ class TreeGeneratorUI(object):
             ),
             seed=tree_seed + 101,
             woody_species=info["woody_species"],
+            twig_enabled=cmds.checkBox(
+                self.controls["twig_enabled"], query=True, value=True
+            ),
+            twig_radius_ratio=cmds.floatSliderGrp(
+                self.controls["twig_radius_ratio"], query=True, value=True
+            ),
+            twig_length_ratio=cmds.floatSliderGrp(
+                self.controls["twig_length_ratio"], query=True, value=True
+            ),
+            twig_curvature=cmds.floatSliderGrp(
+                self.controls["twig_curvature"], query=True, value=True
+            ),
+            twig_leaf_ratio=cmds.floatSliderGrp(
+                self.controls["twig_leaf_ratio"], query=True, value=True
+            ),
         )
 
     def _read_weather_config(self, cmds, tree_seed):
@@ -535,6 +550,34 @@ class TreeGeneratorUI(object):
                 self.controls["flower_size"],
                 edit=True,
                 value=foliage_config.flower_size_multiplier,
+            )
+            # Twig parameter back-fill (2026-07): restore the saved
+            # twig settings so reloading a selected tree shows the
+            # actual generation parameters.
+            cmds.checkBox(
+                self.controls["twig_enabled"],
+                edit=True,
+                value=getattr(foliage_config, "twig_enabled", True),
+            )
+            cmds.floatSliderGrp(
+                self.controls["twig_radius_ratio"],
+                edit=True,
+                value=getattr(foliage_config, "twig_radius_ratio", 0.035),
+            )
+            cmds.floatSliderGrp(
+                self.controls["twig_length_ratio"],
+                edit=True,
+                value=getattr(foliage_config, "twig_length_ratio", 2.5),
+            )
+            cmds.floatSliderGrp(
+                self.controls["twig_curvature"],
+                edit=True,
+                value=getattr(foliage_config, "twig_curvature", 0.35),
+            )
+            cmds.floatSliderGrp(
+                self.controls["twig_leaf_ratio"],
+                edit=True,
+                value=getattr(foliage_config, "twig_leaf_ratio", 0.7),
             )
 
         weather_config = maya_editing.get_weather_config(root)
@@ -875,6 +918,55 @@ class TreeGeneratorUI(object):
             fieldMinValue=0.01,
             fieldMaxValue=5.0,
             value=1.0,
+            precision=2,
+        )
+        # --- Twig (fine shoot) controls (2026-07) ---
+        # Visible curved twigs grow from each GrowthTip and carry leaves
+        # at their tips.  Disabled restores the legacy "leaves on bark"
+        # attachment.  Ratios are explained in FoliageConfig comments.
+        cmds.separator(height=6, style="in")
+        self.controls["twig_enabled"] = cmds.checkBox(
+            label="Generate Twigs (fine shoots carrying leaves)",
+            value=True,
+        )
+        self.controls["twig_radius_ratio"] = cmds.floatSliderGrp(
+            label="Twig Radius Ratio",
+            field=True,
+            minValue=0.005,
+            maxValue=0.08,
+            fieldMinValue=0.001,
+            fieldMaxValue=0.15,
+            value=0.035,
+            precision=3,
+        )
+        self.controls["twig_length_ratio"] = cmds.floatSliderGrp(
+            label="Twig Length Ratio",
+            field=True,
+            minValue=0.5,
+            maxValue=5.0,
+            fieldMinValue=0.1,
+            fieldMaxValue=10.0,
+            value=2.5,
+            precision=2,
+        )
+        self.controls["twig_curvature"] = cmds.floatSliderGrp(
+            label="Twig Curvature",
+            field=True,
+            minValue=0.0,
+            maxValue=1.0,
+            fieldMinValue=0.0,
+            fieldMaxValue=1.0,
+            value=0.35,
+            precision=2,
+        )
+        self.controls["twig_leaf_ratio"] = cmds.floatSliderGrp(
+            label="Twig Leaf Ratio",
+            field=True,
+            minValue=0.0,
+            maxValue=1.0,
+            fieldMinValue=0.0,
+            fieldMaxValue=1.0,
+            value=0.7,
             precision=2,
         )
         cmds.setParent("..")

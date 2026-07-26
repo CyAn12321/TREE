@@ -11,6 +11,7 @@ from .foliage import (
     FlowerInstance,
     FoliageConfig,
     LeafInstance,
+    TwigInstance,
     WOODY_FLOWER_SPECS,
     WOODY_LEAF_SPECS,
     generate_foliage,
@@ -138,6 +139,138 @@ def _emit_octahedron(points, counts, connects, center, axis, side, normal,
     for triangle in _OCTAHEDRON_TRIANGLES:
         counts.append(3)
         connects.extend(base + index for index in triangle)
+
+
+def _emit_curved_cylinder(points, counts, connects, start, axis, side, normal,
+                          length, base_radius, tip_radius, bend_axis,
+                          bend_strength, segments=8, rings=6):
+    """Append a curved tapered cylinder between two points along ``axis``.
+
+    Used for twigs (fine shoots).  Unlike ``_emit_cylinder`` (which is
+    straight), this variant bends the cylinder sideways along
+    ``bend_axis`` by ``bend_strength`` over its length, producing a
+    gentle natural arc instead of a stiff straight stick.  Radius
+    interpolates from ``base_radius`` at the start to ``tip_radius`` at
+    the end (linear taper).  ``segments`` is the radial subdivision
+    (8 -> smooth round silhouette for visible twigs; the prior 6 was
+    too faceted at the new larger radius), ``rings`` is the lengthwise
+    subdivision (>=5 needed to read the curve smoothly).
+    """
+    axis_n = _normalize(axis)
+    bend_axis_n = _normalize(bend_axis)
+    entry_base = len(points)
+    ring_verts = []
+    for ring in range(rings + 1):
+        t = float(ring) / float(rings)
+        # Forward position along the axis (linear in t).
+        forward = _mul(axis_n, length * t)
+        # Sideways bend: quadratic in t so the bend starts gently and
+        # accumulates toward the tip (cantilever gravity curve).
+        bend = _mul(bend_axis_n, bend_strength * t * t)
+        center = _add(_add(start, forward), bend)
+        # Linear taper from base_radius to tip_radius.
+        r = base_radius + (tip_radius - base_radius) * t
+        ring = []
+        for seg in range(segments):
+            angle = 2.0 * math.pi * seg / segments
+            offset = _add(
+                _mul(side, math.cos(angle) * r),
+                _mul(normal, math.sin(angle) * r),
+            )
+            ring.append(len(points))
+            points.append(_add(center, offset))
+        ring_verts.append(ring)
+    # Cap the base so the twig looks solid where it meets the branch.
+    base_center_idx = len(points)
+    points.append(start)
+    for seg in range(segments):
+        counts.append(3)
+        connects.extend((
+            base_center_idx,
+            entry_base + seg,
+            entry_base + (seg + 1) % segments,
+        ))
+    # Side quads (as two triangles each) between consecutive rings.
+    for ring in range(rings):
+        for seg in range(segments):
+            a = ring_verts[ring][seg]
+            b = ring_verts[ring][(seg + 1) % segments]
+            c = ring_verts[ring + 1][(seg + 1) % segments]
+            d = ring_verts[ring + 1][seg]
+            counts.append(3)
+            connects.extend((a, b, c))
+            counts.append(3)
+            connects.extend((a, c, d))
+
+
+def build_twig_mesh_arrays(foliage_model):
+    """Return a single mesh-array group containing all twig geometry.
+
+    Each twig is emitted as a curved tapered cylinder using
+    ``_emit_curved_cylinder``.  All twigs share the same bark material
+    (assigned by the caller via ``_get_bark_shading_group``) so they
+    visually blend with the main branches.
+
+    Parameters:
+        foliage_model (FoliageModel): Foliage model whose ``twigs`` list
+            is to be tessellated.
+
+    Returns:
+        dict: Single-entry dict ``{0: (points, counts, connects)}`` so
+        the caller can iterate the same way as ``build_leaf_mesh_groups``.
+        Returns ``{}`` when there are no twigs.
+    """
+    points = []
+    counts = []
+    connects = []
+    for twig in foliage_model.twigs:
+        _emit_curved_cylinder(
+            points, counts, connects,
+            start=twig.start,
+            axis=twig.axis,
+            side=twig.side,
+            normal=twig.normal,
+            length=twig.length,
+            base_radius=twig.base_radius,
+            tip_radius=twig.tip_radius,
+            bend_axis=twig.bend_axis,
+            bend_strength=twig.bend_strength,
+            segments=8,
+            rings=6,
+        )
+    if not points:
+        return {}
+    return {0: (points, counts, connects)}
+
+
+def _get_twig_shading_group(cmds):
+    """Return (or lazily create) the bark shading group for twigs.
+
+    Twigs reuse the main branch bark material so they visually blend
+    with the trunk.  ``LSystemTree_Bark_MAT`` is created on demand by
+    ``maya_mesh._get_bark_shading_group`` when the tree mesh is built;
+    if the foliage is generated standalone (no tree mesh), we recreate
+    the same material here so the twigs are not unshaded.
+    """
+    material = "LSystemTree_Bark_MAT"
+    shading_group = material + "SG"
+    if not cmds.objExists(material):
+        material = cmds.shadingNode("lambert", asShader=True, name=material)
+        cmds.setAttr(material + ".color", 0.20, 0.075, 0.025, type="double3")
+        cmds.setAttr(material + ".diffuse", 0.82)
+    if not cmds.objExists(shading_group):
+        shading_group = cmds.sets(
+            renderable=True,
+            noSurfaceShader=True,
+            empty=True,
+            name=shading_group,
+        )
+        cmds.connectAttr(
+            material + ".outColor",
+            shading_group + ".surfaceShader",
+            force=True,
+        )
+    return shading_group
 
 
 def build_leaf_mesh_groups(foliage_model):
@@ -1613,7 +1746,7 @@ def _set_string_attr(cmds, node, attr, value):
 
 
 def _create_mesh(cmds, om, arrays, name, parent, shading_group, smooth_level=0,
-                 generate_uvs=False):
+                 generate_uvs=False, depth_bias=-0.5):
     """Create a Maya mesh from raw point/count/connect arrays.
 
     ``smooth_level`` applies ``polySmoothFace`` subdivisions after
@@ -1625,6 +1758,14 @@ def _create_mesh(cmds, om, arrays, name, parent, shading_group, smooth_level=0,
     ``generate_uvs`` triggers automatic planar UV projection after mesh
     creation so that vein bump maps and petal gradient ramps sample
     correctly instead of falling back to a default value.
+
+    ``depth_bias`` controls the polygonOffset value applied to the
+    mesh shape.  More negative = closer to camera = renders in front.
+    Default -0.5 is the standard foliage bias; flowers use a more
+    negative value (e.g. -1.0) so they always render in front of
+    leaves at the same depth, preventing leaves from occluding
+    blossoms  -  the standard game-engine depth-bias trick for
+    foreground hero objects.
     """
     points, counts, connects = arrays
     if not points:
@@ -1718,12 +1859,14 @@ def _create_mesh(cmds, om, arrays, name, parent, shading_group, smooth_level=0,
     # collision detection with a cheap render-state tweak  -  the standard
     # approach used by game engines and SpeedTree-style foliage.
     #   - polygonOffset: biases the depth test so foliage wins ties
-    #     against branch geometry at the same depth.
+    #     against branch geometry at the same depth.  ``depth_bias``
+    #     lets the caller push flowers further forward than leaves so
+    #     blossoms are never occluded by nearby leaves.
     #   - oppositeZ: renders back faces with reversed depth so internal
     #     faces don't fight front faces.
     if cmds.attributeQuery("polygonOffset", node=shape, exists=True):
         # Negative bias = closer to camera = renders in front.
-        cmds.setAttr(shape + ".polygonOffset", -0.5)
+        cmds.setAttr(shape + ".polygonOffset", depth_bias)
     if cmds.attributeQuery("oppositeZ", node=shape, exists=True):
         cmds.setAttr(shape + ".oppositeZ", True)
     # Smooth and unify face normals so every triangle is lit consistently.
@@ -1969,23 +2112,41 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
     return prototype, material_list
 
 
+def _flower_instance_state(flower):
+    """Return ``"bud"``, ``"bloom"``, or ``"wilt"`` from existing openness/wilt.
+
+    Uses the same morphological thresholds that ``_flower_state_openness``
+    produces in the pure-Python layer:
+      - wilt >= 0.40  ->  ``"wilt"``  (wilt state: 0.55-0.85)
+      - openness < 0.30  ->  ``"bud"``   (bud state: 0.10-0.28)
+      - otherwise  ->  ``"bloom"``
+
+    These ranges are non-overlapping by construction so every flower
+    maps to exactly one state.
+    """
+    if flower.wilt >= 0.40:
+        return "wilt"
+    if flower.openness < 0.30:
+        return "bud"
+    return "bloom"
+
+
 def _build_flower_instances(cmds, om, model, parent, name):
     """Create woody flower prototypes and instance them to every flower.
 
     Instead of merging every flower's geometry into one giant mesh
-    (the legacy path), this builds ONE high-precision prototype per
-    color_index and uses Maya ``cmds.instance()`` to copy it to each
-    attachment point.  Benefits:
+    (the legacy path), this builds up to THREE high-precision prototypes
+    per color_index  -  one each for bud, bloom, and wilt states  -  and
+    uses Maya ``cmds.instance()`` to copy each prototype to its matching
+    flowers.  Benefits:
 
-    - Geometry cost is O(1) in flower count (one prototype, N cheap
-      transforms) instead of O(N) merged vertices.
-    - The single prototype can afford far higher precision (subdivided
-      petals, double-sided thickness, vein bump, OpenSubdiv smoothing)
-      because it is built once  -  the detail is then shared by every
-      instance for free.
+    - Geometry cost is O(3) in color count (at most 3 prototypes per
+      color, N cheap transforms) instead of O(N) merged vertices.
+    - Each state prototype bakes the state's characteristic openness
+      and wilt into the petal geometry: buds stay tightly closed,
+      blooms fan wide open, and wilted petals droop and curl.
     - Per-flower size variation is handled by uniform scale on the
-      instance transform (``flower.size / avg_size``); openness/wilt
-      use the per-color average since they vary little within a season.
+      instance transform (``flower.size / avg_size``).
 
     The prototype's local frame is +Y=forward, -Z=side, -X=normal
     (the canonical orientation produced by ``direction=(0,1,0),
@@ -2002,15 +2163,19 @@ def _build_flower_instances(cmds, om, model, parent, name):
     if not woody_species or not procedural_flowers:
         return [], []
 
-    # Group procedural flowers by color_index so each color gets its
-    # own prototype + shader.
-    by_color = {}
+    # Group procedural flowers by (color_index, state) so each
+    # morphological state (bud / bloom / wilt) gets its own prototype
+    # with the state's characteristic openness/wilt baked into the
+    # petal geometry.  A single per-color prototype silently averaged
+    # away the per-state variation (2026-07 fix).
+    by_color_state = {}
     for flower in procedural_flowers:
-        by_color.setdefault(flower.color_index, []).append(flower)
+        state = _flower_instance_state(flower)
+        by_color_state.setdefault((flower.color_index, state), []).append(flower)
 
     instances = []
     prototypes = []
-    for color_index, flowers in by_color.items():
+    for (color_index, state), flowers in by_color_state.items():
         avg_size = sum(f.size for f in flowers) / len(flowers)
         avg_openness = sum(f.openness for f in flowers) / len(flowers)
         avg_wilt = sum(f.wilt for f in flowers) / len(flowers)
@@ -2048,7 +2213,9 @@ def _build_flower_instances(cmds, om, model, parent, name):
         # and avoids stale vein-texture connections from a deleted
         # prototype.
         season_key = model.profile.key
-        proto_base = "{}_{}_FlowerProto_{:02d}".format(name, season_key, color_index)
+        proto_base = "{}_{}_FlowerProto_{}_{:02d}".format(
+            name, season_key, state, color_index,
+        )
         spec = WOODY_FLOWER_SPECS.get(woody_species)
         petal_sg = _material_with_veins(
             cmds,
@@ -2067,24 +2234,34 @@ def _build_flower_instances(cmds, om, model, parent, name):
             proto_base + "_Sepal_MAT",
             SEPAL_GREEN_COLOR,
         )
-        # smooth_level=2 gives the prototype full Catmull-Clark rounding
-        # for smooth organic petals.  Affordable because there is only
-        # one prototype per color_index, and all 52 instances share the
+        # smooth_level=1 applies one round of Catmull-Clark subdivision
+        # to the prototype petals for smoother organic curvature.
+        # Reduced from 2 (2026-07) per user request to lower the flower
+        # mesh subdivision level.  Affordable because there is only one
+        # prototype per color_index, and all instances share the
         # prototype's geometry via cmds.instance()  -  zero extra cost.
+        #
+        # depth_bias=-1.0 pushes flower meshes closer to the camera than
+        # leaves (default -0.5) so blossoms are never occluded by nearby
+        # leaves at the same depth  -  the standard hero-object depth
+        # bias trick.  All three flower sub-meshes (petals/center/
+        # sepals) use the same bias so the blossom reads as one unit.
         petal_mesh = _create_mesh(
             cmds, om, petal_groups[color_index],
-            proto_base + "_Petals", parent, petal_sg, smooth_level=2,
-            generate_uvs=True,
+            proto_base + "_Petals", parent, petal_sg, smooth_level=1,
+            generate_uvs=True, depth_bias=-1.0,
         )
         center_mesh = _create_mesh(
             cmds, om, center_arrays,
             proto_base + "_Center", parent, center_sg, smooth_level=1,
+            depth_bias=-1.0,
         )
         sepal_mesh = None
         if sepal_arrays[0]:
             sepal_mesh = _create_mesh(
                 cmds, om, sepal_arrays,
                 proto_base + "_Sepals", parent, sepal_sg, smooth_level=1,
+                depth_bias=-1.0,
             )
         # Guard against petal/center failing to create  -  polyUnite on
         # None inputs would raise and abort the whole foliage build.
@@ -2103,6 +2280,21 @@ def _build_flower_instances(cmds, om, model, parent, name):
                 constructionHistory=False, name=proto_base,
             )[0]
         cmds.parent(prototype, parent)
+        # polyUnite creates a fresh shape that does NOT inherit the
+        # per-shape polygonOffset set on the petal/center/sepal sub-
+        # meshes above.  Re-apply the flower depth bias on the united
+        # prototype so all flower instances render in front of leaves
+        # (instances share the prototype's shape, so this single set
+        # covers every flower instance).
+        proto_shape = cmds.listRelatives(prototype, shapes=True, fullPath=True)
+        if proto_shape:
+            proto_shape = proto_shape[0]
+            if cmds.attributeQuery("polygonOffset", node=proto_shape, exists=True):
+                cmds.setAttr(proto_shape + ".polygonOffset", -1.0)
+            if cmds.attributeQuery("castsShadows", node=proto_shape, exists=True):
+                cmds.setAttr(proto_shape + ".castsShadows", False)
+            if cmds.attributeQuery("receiveShadows", node=proto_shape, exists=True):
+                cmds.setAttr(proto_shape + ".receiveShadows", False)
         # CRITICAL: the prototype is hidden so it does not render at
         # the origin, but Maya instances INHERIT the source visibility
         #  -  every instance created from a hidden prototype is also
@@ -2110,7 +2302,7 @@ def _build_flower_instances(cmds, om, model, parent, name):
         cmds.setAttr(prototype + ".visibility", False)
         prototypes.append(prototype)
 
-        # Instance the prototype to every flower in this color group.
+        # Instance the prototype to every flower in this (color,state) group.
         instance_group = cmds.group(
             empty=True, name=proto_base + "_Instances", parent=parent,
         )
@@ -2118,7 +2310,9 @@ def _build_flower_instances(cmds, om, model, parent, name):
         # PERFORMANCE: original loop issued 4 cmds calls per flower
         # (instance, parent, xform, setAttr)  ->  4*N cmds round-trips
         # that dominated spring-scene runtime (N can reach ~300 with
-        # flower_density=0.52).  Refactored into 4 batched phases:
+        # flower_density=0.52).  Refactored into 4 batched phases
+        # (unchanged from the single-prototype-per-color era  -  the
+        # same batching works for the per-state group sizes).
         #   Phase 1: N cmds.instance (unavoidable  -  no batch API)
         #   Phase 2: 1 cmds.parent (list form, N -> 1 call)
         #   Phase 3: N OpenMaya MFnTransform.set (~5-10x faster than
@@ -2322,7 +2516,35 @@ def create_foliage_in_maya(
     meshes = []
     leaf_meshes = []
     flower_meshes = []
+    twig_meshes = []
     season_key = model.profile.key
+
+    # --- Phase 0: Twig mesh (visible fine shoots, 2026-07) ---
+    # When twig generation is enabled, each GrowthTip grows a visible
+    # curved twig that carries leaves at its tip.  The twig mesh reuses
+    # the main branch bark material so it visually blends with the
+    # trunk.  Built before leaves so leaves (Phase 1) render in front.
+    if getattr(config, "twig_enabled", False) and model.twigs:
+        try:
+            twig_arrays = build_twig_mesh_arrays(model)
+        except Exception:
+            twig_arrays = {}
+        if twig_arrays:
+            twig_shading_group = _get_twig_shading_group(cmds)
+            for color_index, arrays in twig_arrays.items():
+                mesh = _create_mesh(
+                    cmds,
+                    om,
+                    arrays,
+                    "{}_Twigs".format(name),
+                    group,
+                    twig_shading_group,
+                    smooth_level=0,
+                    generate_uvs=False,
+                )
+                if mesh:
+                    meshes.append(mesh)
+                    twig_meshes.append(mesh)
 
     # --- Phase 1: Leaf mesh groups (procedural only, 2026-07) ---
     # All leaves are procedurally generated; the OBJ organ catalog is
@@ -2404,6 +2626,7 @@ def create_foliage_in_maya(
                 cmds, om, arrays,
                 "{}_Flowers_{:02d}".format(name, color_index),
                 group, shading_group, smooth_level=0,
+                depth_bias=-1.0,
             )
             if mesh:
                 meshes.append(mesh)
@@ -2422,6 +2645,7 @@ def create_foliage_in_maya(
             group,
             center_material,
             smooth_level=0,
+            depth_bias=-1.0,
         )
         if center_mesh:
             meshes.append(center_mesh)
@@ -2456,6 +2680,7 @@ def create_foliage_in_maya(
         "meshes": meshes,
         "leaf_meshes": leaf_meshes,
         "flower_meshes": flower_meshes,
+        "twig_meshes": twig_meshes,
         "flower_center_mesh": center_mesh,
         "model": model,
     }
