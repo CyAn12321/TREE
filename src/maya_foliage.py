@@ -1861,19 +1861,17 @@ def _create_mesh(cmds, om, arrays, name, parent, shading_group, smooth_level=0,
 
 
 class _PrototypeFoliageModel(object):
-    def __init__(self, profile, leaves=None, flowers=None, asset_library=None):
+    def __init__(self, profile, leaves=None, flowers=None):
         """Initialize this object from the supplied configuration or input data.
 
         Parameters:
             profile: Input value used by this function.
             leaves: Input value used by this function.
             flowers: Input value used by this function.
-            asset_library: Input value used by this function.
         """
         self.profile = profile
         self.leaves = list(leaves or [])
         self.flowers = list(flowers or [])
-        self.asset_library = asset_library
 
 
 def _dominant_color_index(instances):
@@ -2191,7 +2189,7 @@ def _build_flower_instances(cmds, om, model, parent, name):
     woody_species = getattr(
         getattr(model, "config", None), "woody_species", None
     )
-    procedural_flowers = [f for f in model.flowers if not f.asset_id]
+    procedural_flowers = list(model.flowers)
     if not woody_species or not procedural_flowers:
         return [], []
 
@@ -2699,12 +2697,6 @@ def create_foliage_in_maya(
         cmds.setAttr(group + ".flowerCount", len(model.flowers))
         cmds.addAttr(group, longName="flowerWilt", attributeType="double")
         cmds.setAttr(group + ".flowerWilt", model.profile.flower_wilt)
-        cmds.addAttr(group, longName="organAssetSource", dataType="string")
-        cmds.setAttr(
-            group + ".organAssetSource",
-            "Kenney Nature Kit 2.1 (CC0-1.0)",
-            type="string",
-        )
         _set_string_attr(
             cmds,
             group,

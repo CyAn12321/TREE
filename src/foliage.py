@@ -6,12 +6,6 @@ from __future__ import division, print_function
 import math
 import random
 
-from .assets import stable_unit
-# NOTE (2026-07): OrganAssetLibrary is no longer used  -  all leaves and
-# flowers are now procedurally generated.  The OBJ organ catalog
-# (assets/organs/) and OrganAssetLibrary class remain in assets.py for
-# reference but are not imported at runtime.
-# from .assets import OrganAssetLibrary
 from .math_utils import (
     add as _add,
     sub as _sub,
@@ -20,6 +14,7 @@ from .math_utils import (
     length as _length,
     cross as _cross_vectors,
     normalize_default as _normalize,
+    stable_unit,
 )
 
 
@@ -776,7 +771,6 @@ class LeafInstance(object):
         "color_index",
         "source_segment",
         "attachment_id",
-        "asset_id",
         "state",
         "petiole_length",
         "species",
@@ -797,7 +791,6 @@ class LeafInstance(object):
         color_index,
         source_segment,
         attachment_id=None,
-        asset_id=None,
         state="mature",
         petiole_length=0.0,
         species=None,
@@ -818,7 +811,6 @@ class LeafInstance(object):
             color_index: Input value used by this function.
             source_segment: Input value used by this function.
             attachment_id: Input value used by this function.
-            asset_id: Input value used by this function.
             state: Input value used by this function.
             petiole_length: Input value used by this function.
             species: Input value used by this function.
@@ -836,7 +828,6 @@ class LeafInstance(object):
         self.color_index = color_index
         self.source_segment = source_segment
         self.attachment_id = str(attachment_id if attachment_id is not None else source_segment)
-        self.asset_id = asset_id
         self.state = state
         self.petiole_length = float(petiole_length)
         self.species = species
@@ -866,7 +857,6 @@ class FlowerInstance(object):
         "wilt",
         "source_tip",
         "attachment_id",
-        "asset_id",
         "state",
         "peduncle_length",
         "species",
@@ -883,7 +873,6 @@ class FlowerInstance(object):
         wilt,
         source_tip,
         attachment_id=None,
-        asset_id=None,
         state="bloom",
         peduncle_length=0.0,
         species=None,
@@ -900,7 +889,6 @@ class FlowerInstance(object):
             wilt: Input value used by this function.
             source_tip: Input value used by this function.
             attachment_id: Input value used by this function.
-            asset_id: Input value used by this function.
             state: Input value used by this function.
             peduncle_length: Input value used by this function.
             species: Input value used by this function.
@@ -914,7 +902,6 @@ class FlowerInstance(object):
         self.wilt = wilt
         self.source_tip = source_tip
         self.attachment_id = str(attachment_id if attachment_id is not None else source_tip)
-        self.asset_id = asset_id
         self.state = state
         self.peduncle_length = float(peduncle_length)
         self.species = species
@@ -1040,7 +1027,7 @@ class TwigInstance(object):
 
 
 class FoliageModel(object):
-    def __init__(self, config, profile, leaves, flowers, asset_library=None, twigs=None):
+    def __init__(self, config, profile, leaves, flowers, twigs=None):
         """Initialize this object from the supplied configuration or input data.
 
         Parameters:
@@ -1048,14 +1035,12 @@ class FoliageModel(object):
             profile: Input value used by this function.
             leaves: Input value used by this function.
             flowers: Input value used by this function.
-            asset_library: Input value used by this function.
             twigs: Input value used by this function.
         """
         self.config = config
         self.profile = profile
         self.leaves = leaves
         self.flowers = flowers
-        self.asset_library = asset_library
         # Twigs (visible fine shoots).  Empty list preserves legacy
         # behavior when twig generation is disabled.
         self.twigs = twigs if twigs is not None else []
@@ -1510,7 +1495,6 @@ def _place_node_flowers_on_twig(
                     wilt=flower_wilt,
                     source_tip=twig.tip_index,
                     attachment_id=attachment_id,
-                    asset_id=None,
                     state=FLOWER_STATE_BY_SEASON[config.season],
                     peduncle_length=peduncle_length,
                     species=config.woody_species,
@@ -1635,7 +1619,6 @@ def _place_tip_inflorescence_on_twig(
                 wilt=flower_wilt,
                 source_tip=twig.tip_index,
                 attachment_id=attachment_id,
-                asset_id=None,
                 state=FLOWER_STATE_BY_SEASON[config.season],
                 peduncle_length=peduncle_length,
                 species=config.woody_species,
@@ -1729,10 +1712,8 @@ def generate_foliage(tree_model, config=None):
     config = config or FoliageConfig(seed=tree_model.config.seed + 101)
     profile = get_season(config.season)
     rng = random.Random(config.seed)
-    # NOTE (2026-07): OrganAssetLibrary loading removed.  All leaves and
-    # flowers are now procedurally generated (asset_id=None).  The OBJ
-    # organ catalog (assets/organs/) is preserved for reference but no
-    # longer imported at runtime.
+    # Leaves and flowers are generated procedurally; no external organ asset
+    # catalog is loaded at runtime.
     # When a woody species is selected, override the season profile's
     # flower palette, center color and openness with the species-accurate
     # botanical values so peach/cherry/pear/plum blossoms are visually
@@ -1958,7 +1939,6 @@ def generate_foliage(tree_model, config=None):
                             else 0
                         ),
                         attachment_id=attachment_id,
-                        asset_id=None,
                         state=LEAF_STATE_BY_SEASON[config.season],
                         petiole_length=petiole_length,
                         species=config.woody_species,
@@ -2113,11 +2093,6 @@ def generate_foliage(tree_model, config=None):
                         color_index=local_rng.randrange(len(profile.leaf_palette)),
                         source_segment=segment.index,
                         attachment_id=attachment_id,
-                        asset_id=(
-                            # All leaves are now procedurally generated;
-                            # asset_id is always None (2026-07).
-                            None
-                        ),
                         state=LEAF_STATE_BY_SEASON[config.season],
                         petiole_length=petiole_length,
                         species=config.woody_species,
@@ -2359,11 +2334,10 @@ def generate_foliage(tree_model, config=None):
                         wilt=flower_wilt,
                         source_tip=tip_index,
                         attachment_id=attachment_id,
-                        asset_id=None,
                         state=FLOWER_STATE_BY_SEASON[config.season],
                         peduncle_length=peduncle_length,
                         species=config.woody_species,
                     )
                 )
 
-    return FoliageModel(config, profile, leaves, flowers, None, twigs=twigs)
+    return FoliageModel(config, profile, leaves, flowers, twigs=twigs)

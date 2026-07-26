@@ -19,7 +19,7 @@
 - 全树先统一计算叶片和花朵额度，再公平分配到各合格枝条与枝梢；达到网格上限时也不会只集中在先生成的一侧。
 - 生成单一多边形网格，减少 Maya 场景节点数量。
 - L-System 直接输出带稳定 ID 和局部坐标框架的叶片/花朵附着点。
-- 内置 Kenney Nature Kit（CC0）器官资产目录；当前叶片和花朵主要使用程序化网格生成。
+- 叶片和花朵全部使用程序化网格生成，不依赖外部器官模型资产。
 - 当前第一阶段动画系统只实现风吹树枝摇摆：树干、树枝、细枝和附着的叶花网格共同使用 Maya bend deformer 与表达式驱动。
 - 雨、雪、积雪、落叶和落花动画已从当前 Maya 动画创建路径中移除，后续作为独立阶段重新设计。
 
@@ -75,7 +75,6 @@ exec(compile(SCRIPT_SOURCE, SCRIPT_PATH, "exec"), {
 TREE/
 ├─ launcher.py          # Maya 启动入口
 ├─ src/core.py          # 纯 Python L-System、3D turtle 和预设
-├─ src/assets.py        # CC0 器官目录、稳定加权选择和 OBJ 归一化加载
 ├─ src/maya_mesh.py     # Maya 单网格构建器
 ├─ src/foliage.py       # 四季、叶片/花朵分布与凋谢数据
 ├─ src/maya_foliage.py  # 叶片、花瓣、花心合并网格及材质
@@ -83,7 +82,6 @@ TREE/
 ├─ src/vertex_animation.py # 纯 Python 风摆动参考公式
 ├─ src/maya_weather.py  # Maya 风摆动与落叶/落花粒子动画
 ├─ src/maya_ui.py       # Maya 参数面板
-├─ assets/organs/       # 叶片/花朵 OBJ、catalog、来源和 CC0 许可证
 └─ tests/test_core.py   # 不启动 Maya 即可运行的测试
 ```
 
