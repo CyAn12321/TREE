@@ -8,7 +8,6 @@ code converts the graph into a single polygon mesh.
 from __future__ import division, print_function
 
 import math
-import random
 
 from .math_utils import (
     EPSILON,
@@ -571,27 +570,6 @@ class _TurtleState(object):
         self.left = _normalize(_rotate(self.left, axis, radians))
         self.up = _normalize(_cross(self.heading, self.left))
         self.left = _normalize(_cross(self.up, self.heading))
-
-
-def _weighted_successor(options, rng):
-    """Internal helper for weighted successor.
-
-    Parameters:
-        options: Input value used by this function.
-        rng: Input value used by this function.
-    """
-    if any(weight < 0.0 for weight, _ in options):
-        raise ValueError("L-System rule weights cannot be negative")
-    total = sum(weight for weight, _ in options)
-    if total <= 0.0:
-        raise ValueError("L-System rule weights must have a positive sum")
-    value = rng.uniform(0.0, total)
-    accumulated = 0.0
-    for weight, successor in options:
-        accumulated += weight
-        if value <= accumulated:
-            return successor
-    return options[-1][1]
 
 
 def _weighted_successor_value(options, value):

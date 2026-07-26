@@ -11,7 +11,6 @@ from .foliage import (
     FlowerInstance,
     FoliageConfig,
     LeafInstance,
-    TwigInstance,
     WOODY_FLOWER_SPECS,
     WOODY_LEAF_SPECS,
     generate_foliage,
@@ -1298,79 +1297,6 @@ def build_flower_mesh_groups(foliage_model):
     )
 
 
-def build_asset_mesh_groups(foliage_model, kind):
-    """Build combined arrays from the licensed OBJ organ catalog.
-
-    Only instances whose ``asset_id`` is set are processed.  Instances
-    without an asset_id are left for the procedural fallback so they are
-    never silently dropped.
-
-    The OBJ geometry is offset from the bark contact point
-    (``instance.position``) by the petiole/peduncle length along the
-    instance's forward direction, so the organ blade/head starts at the
-    end of the stem just like the procedural meshes.
-    """
-    library = getattr(foliage_model, "asset_library", None)
-    instances = foliage_model.leaves if kind == "leaf" else foliage_model.flowers
-    groups = {}
-    if library is None:
-        return groups
-    for instance in instances:
-        if not instance.asset_id:
-            continue
-        asset = library.get(instance.asset_id)
-        mesh = library.mesh(instance.asset_id)
-        arrays = groups.setdefault((instance.color_index, instance.asset_id), ([], [], []))
-        points, counts, connects = arrays
-        forward, side, normal = _orientation(instance.direction, instance.azimuth)
-        scale = (instance.length if kind == "leaf" else instance.size) * asset.scale
-        stem_length = float(
-            getattr(instance, "petiole_length", 0.0)
-            if kind == "leaf"
-            else getattr(instance, "peduncle_length", 0.0)
-        )
-        origin = _add(instance.position, _mul(forward, stem_length))
-        base_index = len(points)
-        for x_value, y_value, z_value in mesh.vertices:
-            point = _add(
-                origin,
-                _add(
-                    _mul(side, x_value * scale),
-                    _add(_mul(forward, y_value * scale), _mul(normal, z_value * scale)),
-                ),
-            )
-            if kind == "flower" and instance.wilt > 0.0:
-                point = _add(point, (0.0, -y_value * scale * instance.wilt * 0.55, 0.0))
-            points.append(point)
-        for face in mesh.faces:
-            counts.append(len(face))
-            connects.extend(base_index + index for index in face)
-    return groups
-
-
-def _procedural_leaf_groups_for_orphans(foliage_model):
-    """Procedural leaf meshes for instances that have no OBJ asset_id."""
-    orphan_model = _PrototypeFoliageModel(
-        foliage_model.profile,
-        leaves=[leaf for leaf in foliage_model.leaves if not leaf.asset_id],
-    )
-    if not orphan_model.leaves:
-        return {}
-    return build_leaf_mesh_groups(orphan_model)
-
-
-def _procedural_flower_groups_for_orphans(foliage_model):
-    """Procedural flower meshes for instances that have no OBJ asset_id."""
-    orphan_model = _PrototypeFoliageModel(
-        foliage_model.profile,
-        flowers=[f for f in foliage_model.flowers if not f.asset_id],
-    )
-    if not orphan_model.flowers:
-        return {}, ([], [], []), ([], [], [])
-    petal_groups, center_arrays, sepal_arrays = build_flower_mesh_groups(orphan_model)
-    return petal_groups, center_arrays, sepal_arrays
-
-
 def _material(cmds, name, color, translucent=False):
     """Lambert material for foliage/flowers.
 
@@ -2654,9 +2580,8 @@ def create_foliage_in_maya(
                     twig_meshes.append(mesh)
 
     # --- Phase 1: Leaf mesh groups (procedural only, 2026-07) ---
-    # All leaves are procedurally generated; the OBJ organ catalog is
-    # no longer loaded.  build_asset_mesh_groups would return {} since
-    # every leaf now has asset_id=None.
+    # All leaves are procedurally generated; the legacy OBJ instancing path
+    # is intentionally not part of the current Maya build.
     woody_species = getattr(config, "woody_species", None)
     leaf_smooth = 0
     try:
@@ -2712,9 +2637,8 @@ def create_foliage_in_maya(
             leaf_meshes.append(mesh)
 
     # --- Phase 2: Flower mesh groups (procedural only, 2026-07) ---
-    # All flowers are procedurally generated; the OBJ organ catalog is
-    # no longer loaded.  build_asset_mesh_groups would return {} since
-    # every flower now has asset_id=None.
+    # All flowers are procedurally generated; the legacy OBJ instancing path
+    # is intentionally not part of the current Maya build.
     if woody_species:
         try:
             flower_instances, _flower_protos = _build_flower_instances(

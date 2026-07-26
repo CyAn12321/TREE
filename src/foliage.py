@@ -1115,23 +1115,6 @@ def _fair_capped_quotas(desired_counts, limit, rng):
     return quotas
 
 
-def _surface_offset(socket, segment):
-    """Offset from the branch center line to its surface at the socket.
-
-    The socket sits on the segment center line at ``amount``.  The branch
-    radius there is the linear interpolation between ``start_radius`` and
-    ``end_radius``.  Pushing outward along ``socket.normal`` moves the
-    organ onto the branch surface (the bark), so leaves/flowers grow from
-    the bark rather than floating inside the wood.
-    """
-    start_radius = float(getattr(segment, "start_radius", 0.0))
-    end_radius = float(getattr(segment, "end_radius", 0.0))
-    amount = float(getattr(socket, "amount", 0.5))
-    surface_radius = start_radius + (end_radius - start_radius) * amount
-    normal = _normalize(getattr(socket, "normal", (0.0, 1.0, 0.0)))
-    return _mul(normal, surface_radius)
-
-
 def _project_to_branch_surface(socket, segment):
     """Analytically project the socket contact point onto the branch frustum.
 
