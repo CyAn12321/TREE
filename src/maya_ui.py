@@ -17,7 +17,7 @@ from . import weather
 
 WINDOW_NAME = "LSystemTreeGeneratorWindow"
 BASE_WINDOW_WIDTH = 580
-BASE_WINDOW_HEIGHT = 1080
+BASE_WINDOW_HEIGHT = 940
 
 
 # Tree species catalog: each entry binds a concrete species name to the
@@ -340,8 +340,11 @@ class TreeGeneratorUI(object):
             wind_intensity=cmds.floatSliderGrp(
                 self.controls["wind_intensity"], query=True, value=True
             ),
-            wind_direction_degrees=cmds.floatSliderGrp(
-                self.controls["wind_direction"], query=True, value=True
+            rain_intensity=cmds.floatSliderGrp(
+                self.controls["rain_intensity"], query=True, value=True
+            ),
+            snow_intensity=cmds.floatSliderGrp(
+                self.controls["snow_intensity"], query=True, value=True
             ),
             leaf_fall_intensity=cmds.floatSliderGrp(
                 self.controls["leaf_fall_intensity"], query=True, value=True
@@ -349,32 +352,18 @@ class TreeGeneratorUI(object):
             flower_fall_intensity=cmds.floatSliderGrp(
                 self.controls["flower_fall_intensity"], query=True, value=True
             ),
-            start_frame=cmds.intFieldGrp(
-                self.controls["weather_start"], query=True, value1=True
+            wind_direction_degrees=cmds.floatSliderGrp(
+                self.controls["wind_direction"], query=True, value=True
             ),
-            end_frame=cmds.intFieldGrp(
-                self.controls["weather_end"], query=True, value1=True
-            ),
+            start_frame=1,
+            end_frame=480,
             seed=tree_seed + 211,
-        )
-
-    def _read_seasonal_cycle_settings(self, cmds):
-        return (
-            cmds.intFieldGrp(
-                self.controls["cycle_start"], query=True, value1=True
-            ),
-            cmds.intFieldGrp(
-                self.controls["season_duration"], query=True, value1=True
-            ),
-            cmds.intFieldGrp(
-                self.controls["cycle_transition"], query=True, value1=True
-            ),
         )
 
     # --- Action callbacks --------------------------------------------------
 
     def generate(self, *unused):
-        """Generate a fresh tree (branches + foliage + wind) in Maya.
+        """Generate a fresh tree (branches + foliage + weather) in Maya.
 
         Deletes the previous tree first so that stale wind expressions,
         orphaned shading nodes and leftover deformers from the old tree
@@ -382,28 +371,11 @@ class TreeGeneratorUI(object):
         """
         cmds = _maya_cmds()
         # Clean up the previous tree BEFORE building the new one.
-        # Without this, the old tree's wind expression, deformers,
-        # and shading nodes accumulate in the scene and collide with
-        # the new tree's nodes  -  causing "parse error / 解析错误"
-        # (stale expression referencing deleted deformer) and "no
-        # color" (leftover condition node with default black colors
-        # blocking the new lambert's color connection).
         self.delete_last()
-        # Global orphan sweep: ``delete_last`` only runs when
-        # ``self.last_root`` is set (same Maya session with a previous
-        # build).  On a FRESH session  -  or after a previous build
-        # failed and ``last_root`` was never assigned  -  ``delete_last``
-        # does nothing and orphaned wind expressions / condition nodes /
-        # materials from earlier sessions survive in the scene.  Each
-        # ``connectAttr`` / ``setAttr`` during foliage setup then
-        # triggers DG evaluation, the orphaned wind expression tries to
-        # parse against a deleted deformer, Maya reports "parse error",
-        # and the RuntimeError is swallowed by ``_material_two_sided_leaf``'s
-        # ``except RuntimeError: pass``  -  skipping ``colorIfTrue`` /
-        # ``colorIfFalse`` setAttr and leaving leaves at default black.
-        maya_editing.cleanup_orphaned_lsystem_nodes(verbose=True)
         result = None
         try:
+            cmds.playbackOptions(minTime=1, maxTime=480, animationStartTime=1, animationEndTime=480)
+            cmds.currentUnit(time="film")
             tree_config = self._read_tree_config(cmds)
             foliage_config = self._read_foliage_config(cmds, tree_config.seed)
             weather_config = self._read_weather_config(cmds, tree_config.seed)
@@ -480,8 +452,7 @@ class TreeGeneratorUI(object):
         root = self._selected_editable_root(cmds)
         tree_config = maya_editing.get_tree_config(root)
         # Resolve the species from the stored preset + woody_species so the
-        # dropdown highlights the right entry.  Old scenes without a
-        # woody_species fall back to the first species matching the preset.
+        # dropdown highlights the right entry.
         foliage_config = maya_editing.get_foliage_config(root)
         stored_woody = getattr(foliage_config, "woody_species", None) if foliage_config else None
         species_key = _species_for(tree_config.preset_key, stored_woody)
@@ -586,9 +557,14 @@ class TreeGeneratorUI(object):
                 value=weather_config.wind_intensity,
             )
             cmds.floatSliderGrp(
-                self.controls["wind_direction"],
+                self.controls["rain_intensity"],
                 edit=True,
-                value=weather_config.wind_direction_degrees,
+                value=weather_config.rain_intensity,
+            )
+            cmds.floatSliderGrp(
+                self.controls["snow_intensity"],
+                edit=True,
+                value=weather_config.snow_intensity,
             )
             cmds.floatSliderGrp(
                 self.controls["leaf_fall_intensity"],
@@ -600,15 +576,10 @@ class TreeGeneratorUI(object):
                 edit=True,
                 value=weather_config.flower_fall_intensity,
             )
-            cmds.intFieldGrp(
-                self.controls["weather_start"],
+            cmds.floatSliderGrp(
+                self.controls["wind_direction"],
                 edit=True,
-                value1=weather_config.start_frame,
-            )
-            cmds.intFieldGrp(
-                self.controls["weather_end"],
-                edit=True,
-                value1=weather_config.end_frame,
+                value=weather_config.wind_direction_degrees,
             )
 
         # Description text reflects the resolved species, not just the preset.
@@ -625,10 +596,6 @@ class TreeGeneratorUI(object):
         """Rebuild branches for the selected tree, then refresh foliage/weather."""
         cmds = _maya_cmds()
         root = self._selected_editable_root(cmds)
-        previous_weather = maya_editing.get_weather_config(root)
-        animation_was_enabled = bool(
-            previous_weather and previous_weather.any_effect_enabled()
-        )
         tree_config = self._read_tree_config(cmds)
         tree_result = maya_editing.regenerate_branches(
             root,
@@ -646,11 +613,8 @@ class TreeGeneratorUI(object):
                 root,
                 self._read_foliage_config(cmds, tree_config.seed),
             )
-        if animation_was_enabled:
-            maya_editing.refresh_weather(
-                root,
-                self._read_weather_config(cmds, tree_config.seed),
-            )
+        if cmds.checkBox(self.controls["weather"], query=True, value=True):
+            maya_editing.refresh_weather(root, self._read_weather_config(cmds, tree_config.seed))
         self.last_root = root
         leaf_count = len(foliage_result["model"].leaves) if foliage_result else 0
         cmds.select(root, replace=True)
@@ -667,17 +631,13 @@ class TreeGeneratorUI(object):
         """Rebuild foliage for the selected tree using current UI values."""
         cmds = _maya_cmds()
         root = self._selected_editable_root(cmds)
-        previous_weather = maya_editing.get_weather_config(root)
-        animation_was_enabled = bool(
-            previous_weather and previous_weather.any_effect_enabled()
-        )
         tree_config = maya_editing.get_tree_config(root)
         result = maya_editing.refresh_foliage(
             root,
             self._read_foliage_config(cmds, tree_config.seed),
         )
         weather_refreshed = False
-        if animation_was_enabled:
+        if cmds.checkBox(self.controls["weather"], query=True, value=True):
             maya_editing.refresh_weather(root, self._read_weather_config(cmds, tree_config.seed))
             weather_refreshed = True
         cmds.select(root, replace=True)
@@ -693,7 +653,7 @@ class TreeGeneratorUI(object):
         )
 
     def refresh_selected_weather(self, *unused):
-        """Add or refresh wind animation for the selected tree."""
+        """Rebuild weather animation for the selected tree."""
         cmds = _maya_cmds()
         root = self._selected_editable_root(cmds)
         tree_config = maya_editing.get_tree_config(root)
@@ -702,106 +662,8 @@ class TreeGeneratorUI(object):
             self._read_weather_config(cmds, tree_config.seed),
         )
         cmds.select(root, replace=True)
-        if result["group"]:
-            plan = result["plan"]
-            label = (
-                "Refreshed weather animation: {} leaves / {} flowers"
-                .format(
-                    plan["falling_leaf_count"],
-                    plan["falling_flower_count"],
-                )
-            )
-        else:
-            label = "All weather animation intensities are 0; animation was cleared"
+        label = "Refreshed weather animation for the selected tree" if result["group"] else "All weather strengths are 0; weather animation was cleared"
         cmds.text(self.controls["status"], edit=True, label=label)
-
-    def create_selected_seasonal_cycle(self, *unused):
-        """Build the complete spring-to-winter animation for the selection."""
-        cmds = _maya_cmds()
-        root = self._selected_editable_root(cmds)
-        tree_config = maya_editing.get_tree_config(root)
-        start_frame, season_duration, transition_frames = (
-            self._read_seasonal_cycle_settings(cmds)
-        )
-        result = maya_editing.create_seasonal_cycle_in_maya(
-            root=root,
-            foliage_config=self._read_foliage_config(cmds, tree_config.seed),
-            weather_config=self._read_weather_config(cmds, tree_config.seed),
-            start_frame=start_frame,
-            season_duration=season_duration,
-            transition_frames=transition_frames,
-        )
-        self.last_root = root
-        cmds.select(root, replace=True)
-        cmds.text(
-            self.controls["status"],
-            edit=True,
-            label=(
-                "Created seasonal cycle: frames {}-{} / 4 seasonal layers"
-                .format(result["cycle_start"], result["cycle_end"])
-            ),
-        )
-
-    def remove_selected_seasonal_cycle(self, *unused):
-        """Remove the seasonal cycle and restore the selected season layer."""
-        cmds = _maya_cmds()
-        root = self._selected_editable_root(cmds)
-        tree_config = maya_editing.get_tree_config(root)
-        maya_weather.delete_weather_nodes(root)
-        maya_editing.delete_seasonal_cycle(root)
-        result = maya_editing.refresh_foliage(
-            root,
-            self._read_foliage_config(cmds, tree_config.seed),
-        )
-        disabled_weather = weather.WeatherConfig(
-            wind_intensity=0.0,
-            wind_direction_degrees=cmds.floatSliderGrp(
-                self.controls["wind_direction"], query=True, value=True
-            ),
-            start_frame=cmds.intFieldGrp(
-                self.controls["weather_start"], query=True, value1=True
-            ),
-            end_frame=cmds.intFieldGrp(
-                self.controls["weather_end"], query=True, value1=True
-            ),
-            seed=tree_config.seed + 211,
-        )
-        maya_editing.store_weather_settings(root, disabled_weather)
-        self.last_root = root
-        cmds.select(root, replace=True)
-        cmds.text(
-            self.controls["status"],
-            edit=True,
-            label=(
-                "Removed seasonal cycle; restored {} leaves / {} flowers"
-                .format(len(result["model"].leaves), len(result["model"].flowers))
-            ),
-        )
-
-    def remove_selected_weather(self, *unused):
-        """Remove wind animation and store a disabled wind configuration."""
-        cmds = _maya_cmds()
-        root = self._selected_editable_root(cmds)
-        existing = maya_editing.get_weather_config(root)
-        tree_config = maya_editing.get_tree_config(root)
-        source = existing or self._read_weather_config(cmds, tree_config.seed)
-        cleared = weather.WeatherConfig(
-            wind_intensity=0.0,
-            wind_direction_degrees=source.wind_direction_degrees,
-            leaf_fall_intensity=0.0,
-            flower_fall_intensity=0.0,
-            start_frame=source.start_frame,
-            end_frame=source.end_frame,
-            seed=source.seed,
-        )
-        maya_weather.delete_weather_nodes(root)
-        maya_editing.store_weather_settings(root, cleared)
-        cmds.select(root, replace=True)
-        cmds.text(
-            self.controls["status"],
-            edit=True,
-            label="Removed wind animation from the selected tree",
-        )
 
     def new_seed_and_generate(self, *unused):
         """Pick a fresh random seed and run :meth:`generate`."""
@@ -818,15 +680,9 @@ class TreeGeneratorUI(object):
         cmds = _maya_cmds()
         if self.last_root and cmds.objExists(self.last_root):
             maya_weather.delete_weather_nodes(self.last_root)
-            maya_editing.delete_seasonal_cycle(self.last_root)
             # Also remove orphaned shading nodes (lambert, condition,
             # samplerInfo, file, bump2d, place2dTexture) that were
-            # created by the foliage build.  ``cmds.delete(root)`` only
-            # removes DAG children  -  shading nodes are DG objects
-            # outside the DAG hierarchy, so they survive the root
-            # deletion and accumulate in the scene, causing the next
-            # tree generation to reuse stale materials with wrong
-            # colors or missing connections.
+            # created by the foliage build.
             maya_editing.delete_foliage_nodes(self.last_root)
             cmds.delete(self.last_root)
         cmds.text(self.controls["status"], edit=True, label="Deleted the last generated tree")
@@ -1125,70 +981,21 @@ class TreeGeneratorUI(object):
         cmds.setParent("..")
         cmds.setParent("..")
 
-        # Level 1: Seasonal Cycle Animation
+        # Level 1: Weather System
         cmds.frameLayout(
-            label="SEASONAL CYCLE ANIMATION",
+            label="WEATHER SYSTEM",
             collapsable=True,
             collapse=False,
             marginWidth=10,
             marginHeight=8,
         )
         cmds.columnLayout(adjustableColumn=True, rowSpacing=5)
-        self.controls["cycle_start"] = cmds.intFieldGrp(
-            label="Cycle Start",
-            value1=1,
-        )
-        self.controls["season_duration"] = cmds.intFieldGrp(
-            label="Frames per Season",
-            value1=240,
-        )
-        self.controls["cycle_transition"] = cmds.intFieldGrp(
-            label="Transition Frames",
-            value1=60,
-        )
-        cmds.text(
-            label="Creates Spring, Summer, Autumn and Winter foliage layers.",
-            align="left",
-            font="smallPlainLabelFont",
-        )
-        cmds.button(
-            label="Create Seasonal Cycle Animation",
-            height=32,
-            backgroundColor=(0.24, 0.38, 0.28),
-            command=self.create_selected_seasonal_cycle,
-        )
-        cmds.button(
-            label="Remove Seasonal Cycle",
-            height=30,
-            backgroundColor=(0.42, 0.28, 0.24),
-            command=self.remove_selected_seasonal_cycle,
-        )
-        cmds.setParent("..")
-        cmds.setParent("..")
-
-        # Level 1: Wind Animation
-        cmds.frameLayout(
-            label="WIND ANIMATION",
-            collapsable=True,
-            collapse=False,
-            marginWidth=10,
-            marginHeight=8,
-        )
-        cmds.columnLayout(adjustableColumn=True, rowSpacing=5)
-        self.controls["weather_start"] = cmds.intFieldGrp(
-            label="Animation Start",
-            value1=1,
-        )
-        self.controls["weather_end"] = cmds.intFieldGrp(
-            label="Animation End",
-            value1=240,
-        )
         self.controls["wind_intensity"] = cmds.floatSliderGrp(
             label="Wind Intensity",
             field=True,
             minValue=0.0,
             maxValue=1.0,
-            value=0.35,
+            value=0.55,
             precision=2,
         )
         self.controls["wind_direction"] = cmds.floatSliderGrp(
@@ -1199,33 +1006,43 @@ class TreeGeneratorUI(object):
             value=25.0,
             precision=1,
         )
-        self.controls["leaf_fall_intensity"] = cmds.floatSliderGrp(
-            label="Falling Leaf Intensity",
+        self.controls["rain_intensity"] = cmds.floatSliderGrp(
+            label="Rain Intensity",
             field=True,
             minValue=0.0,
             maxValue=1.0,
-            value=0.12,
+            value=0.0,
+            precision=2,
+        )
+        self.controls["snow_intensity"] = cmds.floatSliderGrp(
+            label="Snow Intensity",
+            field=True,
+            minValue=0.0,
+            maxValue=1.0,
+            value=0.0,
+            precision=2,
+        )
+        self.controls["leaf_fall_intensity"] = cmds.floatSliderGrp(
+            label="Leaf Fall Intensity",
+            field=True,
+            minValue=0.0,
+            maxValue=1.0,
+            value=0.0,
             precision=2,
         )
         self.controls["flower_fall_intensity"] = cmds.floatSliderGrp(
-            label="Falling Flower Intensity",
+            label="Flower Fall Intensity",
             field=True,
             minValue=0.0,
             maxValue=1.0,
-            value=0.08,
+            value=0.0,
             precision=2,
         )
         cmds.button(
-            label="Add / Refresh Weather Animation",
+            label="Apply Weather",
             height=30,
             backgroundColor=(0.24, 0.34, 0.44),
             command=self.refresh_selected_weather,
-        )
-        cmds.button(
-            label="Remove Weather Animation",
-            height=30,
-            backgroundColor=(0.42, 0.24, 0.24),
-            command=self.remove_selected_weather,
         )
         cmds.setParent("..")
         cmds.setParent("..")
