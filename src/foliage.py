@@ -170,6 +170,7 @@ class WoodyFlowerSpec(object):
         #                                 winter-early spring (the
         #                                 iconic "winter plum")
         "flowering_seasons", "season_flower_density", "season_flower_wilt",
+        "sepal_color", "pedicel_color",
     )
 
     def __init__(
@@ -180,6 +181,7 @@ class WoodyFlowerSpec(object):
         pedicel_thickness=0.06, flowers_per_inflorescence=2,
         flowering_seasons=("spring",), season_flower_density=None,
         season_flower_wilt=None,
+        sepal_color=(0.18, 0.42, 0.14), pedicel_color=(0.18, 0.42, 0.14),
     ):
         self.key = key
         self.label = label
@@ -198,6 +200,8 @@ class WoodyFlowerSpec(object):
         self.droop_bias = float(droop_bias)  # -1=downward droop, 0=neutral, +1=upward
         self.peduncle_ratio = float(peduncle_ratio)  # central peduncle / flower_size (cherry/pear)
         self.pedicel_thickness = float(pedicel_thickness)  # pedicel radius / flower_size
+        self.sepal_color = tuple(sepal_color)
+        self.pedicel_color = tuple(pedicel_color)
         self.flowers_per_inflorescence = int(flowers_per_inflorescence)  # target count per cluster
         # Seasons in which this species actually produces flowers.
         # Seasons NOT listed here will have flower_density forced to 0
@@ -232,13 +236,13 @@ class WoodyLeafSpec(object):
     __slots__ = (
         "key", "label", "blade_shape", "length_width_ratio", "tip_acuity",
         "margin_type", "margin_depth", "apex_type", "base_type",
-        "leaf_size_factor",
+        "leaf_size_factor", "leaf_color_shift",
     )
 
     def __init__(
         self, key, label, blade_shape, length_width_ratio, tip_acuity,
         margin_type="entire", margin_depth=0.0, apex_type="acute", base_type="wedge",
-        leaf_size_factor=1.0,
+        leaf_size_factor=1.0, leaf_color_shift=(0.0, 0.0, 0.0),
     ):
         self.key = key
         self.label = label
@@ -250,6 +254,11 @@ class WoodyLeafSpec(object):
         self.apex_type = apex_type  # 'acute' | 'acuminate' | 'caudate' | 'mucronate'
         self.base_type = base_type  # 'wedge' | 'round' | 'cordate'
         self.leaf_size_factor = float(leaf_size_factor)  # species-relative blade scale
+        # Per-species leaf colour shift (RGB delta) added to the seasonal
+        # palette colour.  Peach leaves are dark glossy-green (shift
+        # toward darker), cherry leaves are lighter yellow-green, pear
+        # leaves are rich mid-green, plum leaves are cool blue-green.
+        self.leaf_color_shift = tuple(leaf_color_shift)
 
 
 # Botanical references (Flora of China / eflora):
@@ -300,6 +309,7 @@ WOODY_FLOWER_SPECS = {
         peduncle_ratio=0.0,
         # Thickened receptacle base compensates for the missing pedicel.
         pedicel_thickness=0.08,
+        sepal_color=(0.35, 0.18, 0.12), pedicel_color=(0.15, 0.40, 0.10),
         # Peach flowers are solitary; 1-2 per tip.
         flowers_per_inflorescence=2,
     ),
@@ -307,14 +317,7 @@ WOODY_FLOWER_SPECS = {
         key="cherry",
         label="Cherry Blossom",
         petal_count=5,
-        # TEMP (2026-07): switched from "obovate" to "wide_oval" to
-        # isolate the basal-transition bug.  obovate's peak=0.65 makes
-        # the natural width rise too slowly near t=0, which collides
-        # with the base_floor clamp and produces a "platform -> steep
-        # flare" near t=0.27.  wide_oval (peak=0.5) rises faster early
-        # on, so the base transition is smooth.  Will switch back to
-        # obovate after fixing its early-rise curve.
-        petal_shape="wide_oval",
+        petal_shape="obovate",
         # Increased ratio (1.20 -> 1.35) to make cherry petals narrower
         # and more elongated  -  visually "flatter" (扁) than peach's
         # 1.10 ratio.  Combined with size_factor reduction below, the
@@ -349,6 +352,7 @@ WOODY_FLOWER_SPECS = {
         peduncle_ratio=0.35,
         # Slender pedicel.
         pedicel_thickness=0.05,
+        sepal_color=(0.22, 0.48, 0.18), pedicel_color=(0.28, 0.15, 0.12),
         # Cherry corymbs have 3-5 flowers per inflorescence.
         flowers_per_inflorescence=5,
     ),
@@ -385,6 +389,7 @@ WOODY_FLOWER_SPECS = {
         peduncle_ratio=0.30,
         # Medium pedicel thickness.
         pedicel_thickness=0.06,
+        sepal_color=(0.16, 0.38, 0.12), pedicel_color=(0.18, 0.42, 0.14),
         # Pear has the largest inflorescence: 5-10 flowers per cluster.
         flowers_per_inflorescence=8,
     ),
@@ -427,6 +432,7 @@ WOODY_FLOWER_SPECS = {
         peduncle_ratio=0.0,
         # Slender, hairless pedicel  -  plum's "delicate" look.
         pedicel_thickness=0.04,
+        sepal_color=(0.20, 0.45, 0.16), pedicel_color=(0.18, 0.42, 0.14),
         # Plum flowers in tight fascicles of 2-3.
         flowers_per_inflorescence=3,
         # Phenology (Flora of China): Prunus mume is the iconic
@@ -487,6 +493,7 @@ WOODY_LEAF_SPECS = {
         #             = 1.00 * 3.83 = 3.83
         # Shrink history: 75% (2.87) -> 65% (2.44) of real-ratio.
         leaf_size_factor=2.44,
+        leaf_color_shift=(-0.04, 0.02, -0.04),
     ),
     "cherry": WoodyLeafSpec(
         "cherry", "Cherry Leaf", "ovate", 2.2, 0.65,
@@ -496,6 +503,7 @@ WOODY_LEAF_SPECS = {
         # (median 8 / 2.75 = 2.91x).  leaf_factor = 0.90 * 2.91 = 2.62.
         # Shrink history: 75% (1.97) -> 65% (1.67) of real-ratio.
         leaf_size_factor=1.67,
+        leaf_color_shift=(-0.02, 0.04, -0.01),
     ),
     "pear": WoodyLeafSpec(
         "pear", "Pear Leaf", "elliptic", 1.8, 0.55,
@@ -505,6 +513,7 @@ WOODY_LEAF_SPECS = {
         # (median 9.5 / 3.0 = 3.17x).  leaf_factor = 0.95 * 3.17 = 3.01.
         # Shrink history: 75% (2.26) -> 65% (1.92) of real-ratio.
         leaf_size_factor=1.92,
+        leaf_color_shift=(0.00, 0.00, 0.00),
     ),
     "plum": WoodyLeafSpec(
         "plum", "Plum Leaf", "ovate", 2.0, 0.75,
@@ -514,6 +523,7 @@ WOODY_LEAF_SPECS = {
         # (median 6 / 2.25 = 2.67x).  leaf_factor = 0.85 * 2.67 = 2.27.
         # Shrink history: 75% (1.70) -> 65% (1.45) of real-ratio.
         leaf_size_factor=1.45,
+        leaf_color_shift=(-0.02, 0.00, 0.03),
     ),
     # --- Non-flowering tree species (2026-07) ---
     # Leaf-only species; their WOODY_FLOWER_SPECS entries use

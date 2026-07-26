@@ -542,16 +542,18 @@ def _petal_width_profile(t, shape, claw, notch=0.0):
         # at both endpoints, eliminating the "steep flare" artifact.
         w = 2.0 * math.sqrt(max(0.0, t * (1.0 - t)))
     elif shape == "obovate":
-        # Asymmetric ellipse with peak above middle (t=0.60), matching
-        # the botanical "obovate" (egg-shaped with broad apex).  The
-        # ellipse center is shifted to c=peak, with the length semi-
-        # axis a = max(peak, 1-peak) so the ellipse spans [0,1].
-        # This replaces the previous piecewise-linear segments which
-        # produced a sharp ridge at the peak and a slow early rise.
+        # Asymmetric sin-based profile with peak above middle (t=0.60),
+        # matching the botanical "obovate" (egg-shaped with broad apex).
+        # Sin curve gives a smooth early rise from the base followed by
+        # a gentle taper toward the tip  -  the derivative is zero at
+        # t=0 and t=peak (ascending) and t=1 (descending), eliminating
+        # the "sharp ridge" artifact of the previous piecewise approach
+        # while rising faster early than the ellipse.
         peak = 0.60
-        a = max(peak, 1.0 - peak)
-        dt = (t - peak) / a
-        w = math.sqrt(max(0.0, 1.0 - dt * dt)) * 1.05
+        if t < peak:
+            w = math.sin(0.5 * math.pi * t / peak) * 1.05
+        else:
+            w = math.sin(0.5 * math.pi * (1.0 - t) / (1.0 - peak)) * 1.05
     else:  # 'wide_oval'
         # Same symmetric ellipse as 'round' but slightly broader (b=1.08)
         # to model the peach petal's "wide oval" shape (Flora of China:
@@ -1179,7 +1181,7 @@ def build_flower_mesh_groups(foliage_model):
             # tapers to a rounded tip so it reads as a pollen head.
             filament_length = stamen_length * 0.70
             anther_length = stamen_length * 0.30
-            anther_radius = stamen_radius * 2.0
+            anther_radius = stamen_radius * 4.0
             # Deterministic per-stamen variation (2026-07): each stamen
             # receives a small angle jitter, length scale, and tilt
             # variation so the ring reads as organic rather than
@@ -2034,10 +2036,11 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
             center_material_name,
             center_color,
         )
+        sepal_color_val = spec.pedicel_color if spec else SEPAL_GREEN_COLOR
         sepal_sg = _material(
             cmds,
             sepal_material_name,
-            SEPAL_GREEN_COLOR,
+            sepal_color_val,
         )
         smooth = 2
     else:
@@ -2229,10 +2232,11 @@ def _build_flower_instances(cmds, om, model, parent, name):
             proto_base + "_Center_MAT",
             center_color,
         )
+        sepal_color_val = spec.pedicel_color if spec else SEPAL_GREEN_COLOR
         sepal_sg = _material(
             cmds,
             proto_base + "_Sepal_MAT",
-            SEPAL_GREEN_COLOR,
+            sepal_color_val,
         )
         # smooth_level=1 applies one round of Catmull-Clark subdivision
         # to the prototype petals for smoother organic curvature.
@@ -2567,6 +2571,14 @@ def create_foliage_in_maya(
             # viewport modes.
             mat_name = "LSystemLeaf_{}_{:02d}_MAT".format(season_key, color_index)
             front_color = model.profile.leaf_palette[color_index]
+            if woody_species:
+                leaf_spec = WOODY_LEAF_SPECS.get(woody_species)
+                if leaf_spec:
+                    shift = leaf_spec.leaf_color_shift
+                    front_color = tuple(
+                        max(0.0, min(1.0, c + s))
+                        for c, s in zip(front_color, shift)
+                    )
             shading_group = _material_with_veins(
                 cmds,
                 mat_name,
