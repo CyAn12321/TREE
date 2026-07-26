@@ -10,7 +10,9 @@ import sys
 if "__file__" in globals():
     PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 else:
-    PROJECT_ROOT = r"C:\Users\21346\Desktop\TREE"
+    # Maya Script Editor does not always provide ``__file__``.  Keep the
+    # fallback pointed at this repository instead of an old developer copy.
+    PROJECT_ROOT = r"D:\未来创新设计\TREE"
 
 if not os.path.isfile(os.path.join(PROJECT_ROOT, "src", "core.py")):
     raise RuntimeError(
@@ -19,6 +21,13 @@ if not os.path.isfile(os.path.join(PROJECT_ROOT, "src", "core.py")):
 
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
+
+# A previous launcher execution may have imported ``src`` from the old
+# duplicate checkout.  Remove the package from Maya's module cache before
+# importing so the repository selected above is authoritative.
+for _module_name in list(sys.modules):
+    if _module_name == "src" or _module_name.startswith("src."):
+        del sys.modules[_module_name]
 
 from src import core
 from src import foliage

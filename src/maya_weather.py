@@ -1,27 +1,36 @@
 # -*- coding: utf-8 -*-
-"""Maya-native weather using deformers, particles, fields and instancers.
+"""Maya-native wind sway animation.
 
-This is the original interactive mode: Maya evaluates the animation directly
-through dependency-graph nodes, so playback does not depend on Python time
-callbacks or pre-baked blendShape poses.
+The old animation layer mixed wind with rain, snow, snow cover, falling
+leaves, falling flowers, particles, fields and collisions.  This module is a
+clean first animation layer: it creates one shared canopy bend layer driven
+by an expression, so branches, leaves and flowers move together.
+
+All nodes are placed under a managed animation group and are registered via a
+message attribute, so refreshing animation removes previous deformers,
+expressions and falling-organ particle systems before rebuilding them.
 """
 
 from __future__ import division, print_function
 
-import math
 import json
+import math
 
 from . import maya_foliage
 from .weather import WeatherConfig, build_weather_plan
+
+
+ANIMATION_MARKER = "lsystemAnimationManaged"
+LEGACY_WEATHER_MARKER = "lsystemWeatherManaged"
+ANIMATION_GROUP_SUFFIX = "_WindAnimation"
+EXPRESSION_SUFFIX = "_WindExpression"
 
 
 def _maya_cmds():
     try:
         import maya.cmds as cmds
     except ImportError:
-        # ``raise X from Y`` is Python 3+ syntax  -  Maya's Python 2.7
-        # raises SyntaxError at import ("parse error").  Plain raise is
-        # the 2.7-compatible form.
+        # Keep this syntax compatible with Maya's Python 2.7 builds.
         raise RuntimeError("Weather animation must be created inside Maya")
     return cmds
 
@@ -31,36 +40,18 @@ def _shape(cmds, transform):
     return shapes[0] if shapes else transform
 
 
-def _safe_set(cmds, plug, *values, **kwargs):
-    if cmds.objExists(plug):
-        cmds.setAttr(plug, *values, **kwargs)
-
-
-def _set_string_attr(cmds, node, attr, value):
-    if not cmds.attributeQuery(attr, node=node, exists=True):
-        cmds.addAttr(node, longName=attr, dataType="string")
-    cmds.setAttr(node + "." + attr, value, type="string")
-
-
 def _weather_material(cmds, name, color, transparency=0.0):
-    """Lambert material with explicit transparency for weather particles.
-
-    Distinct from maya_foliage._material (which uses a translucent=True/False
-    flag for the petal SSS approximation).  Weather effects need a continuous
-    0..1 transparency range  -  rain streaks ~0.18, snow ~0.02, full snow
-    cover ~1.0  -  so a float parameter is the right interface here.
-    """
+    """Create a simple material for instanced falling organs."""
     material = cmds.shadingNode("lambert", asShader=True, name=name)
-    # Explicit color channels instead of *color unpacking  -  *args
-    # followed by a keyword arg is PEP 448 (Python 3.5+) only and
-    # raises SyntaxError on Maya's Python 2.7.
-    cmds.setAttr(material + ".color", color[0], color[1], color[2], type="double3")
+    cmds.setAttr(
+        material + ".color",
+        color[0], color[1], color[2],
+        type="double3",
+    )
     cmds.setAttr(material + ".diffuse", 0.88)
     cmds.setAttr(
         material + ".transparency",
-        transparency,
-        transparency,
-        transparency,
+        transparency, transparency, transparency,
         type="double3",
     )
     shading_group = cmds.sets(
@@ -77,85 +68,210 @@ def _weather_material(cmds, name, color, transparency=0.0):
     return material, shading_group
 
 
+def _safe_set(cmds, plug, *values, **kwargs):
+    if cmds.objExists(plug):
+        cmds.setAttr(plug, *values, **kwargs)
+
+
+def _set_string_attr(cmds, node, attr, value):
+    if not cmds.attributeQuery(attr, node=node, exists=True):
+        cmds.addAttr(node, longName=attr, dataType="string")
+    cmds.setAttr(node + "." + attr, value, type="string")
+
+
+def _set_bool_attr(cmds, node, attr, value):
+    if not cmds.attributeQuery(attr, node=node, exists=True):
+        cmds.addAttr(node, longName=attr, attributeType="bool")
+    cmds.setAttr(node + "." + attr, bool(value))
+
+
 def _mesh_targets(cmds, tree_result, foliage_result):
-    targets = [tree_result.get("mesh")]
+    """Return all geometry targets for the shared tree-canopy sway."""
+    candidates = [tree_result.get("mesh")]
     if foliage_result:
-        targets.extend(foliage_result.get("meshes", ()))
-    return [target for target in targets if target and cmds.objExists(target)]
+        candidates.extend(foliage_result.get("meshes", ()))
+        candidates.extend(foliage_result.get("twig_meshes", ()))
+    targets = []
+    seen = set()
+    for target in candidates:
+        if target and target not in seen and cmds.objExists(target):
+            seen.add(target)
+            targets.append(target)
+    return targets
 
 
-def _key_emitter_rate(cmds, emitter, rate, config):
-    plug = _shape(cmds, emitter) + ".rate"
-    if not cmds.objExists(plug):
+def _delete_node(cmds, node):
+    try:
+        if node and cmds.objExists(node):
+            cmds.delete(node)
+    except RuntimeError:
+        # Locked nodes should not prevent the rest of the managed animation
+        # from being removed.  The next cleanup pass will try again.
+        pass
+
+
+def _direct_children(cmds, root):
+    return cmds.listRelatives(
+        root,
+        children=True,
+        type="transform",
+        fullPath=True,
+    ) or []
+
+
+def _is_animation_group(cmds, node):
+    return (
+        cmds.attributeQuery(ANIMATION_MARKER, node=node, exists=True)
+        or cmds.attributeQuery(LEGACY_WEATHER_MARKER, node=node, exists=True)
+    )
+
+
+def _delete_group_and_managed_nodes(cmds, group):
+    """Delete a current or legacy animation group and every registered node."""
+    nodes = []
+    if cmds.attributeQuery("managedNodes", node=group, exists=True):
+        nodes = cmds.listConnections(
+            group + ".managedNodes",
+            source=True,
+            destination=False,
+        ) or []
+
+    # Delete DG nodes individually.  Maya can abort a batch delete when one
+    # node is locked, leaving later stale expressions behind.
+    for node in set(nodes):
+        _delete_node(cmds, node)
+    _delete_node(cmds, group)
+
+
+def _delete_orphan_wind_expressions(cmds):
+    """Remove old tree and foliage wind expressions."""
+    for pattern in ("*_WindExpression", "*_OrganFlutterExpression"):
+        for expression in cmds.ls(pattern, type="expression") or []:
+            _delete_node(cmds, expression)
+
+
+def _delete_orphan_falling_nodes(cmds):
+    """Remove dynamic falling nodes left by an interrupted old build."""
+    patterns = (
+        "*_FallingLeafParticles*",
+        "*_FallingFlowerParticles*",
+        "*_LeafSurfaceEmitter*",
+        "*_FlowerSurfaceEmitter*",
+        "*_LeafGravity",
+        "*_FlowerGravity",
+        "*_LeafAir",
+        "*_FlowerAir",
+        "*_LeafInstancer",
+        "*_FlowerInstancer",
+        "*_FallingLeafPrototype*",
+        "*_FallingFlowerPrototype*",
+    )
+    for pattern in patterns:
+        for node in cmds.ls(pattern) or []:
+            _delete_node(cmds, node)
+
+
+def delete_weather_nodes(root):
+    """Delete all old weather nodes and the current wind animation below root.
+
+    The public name is retained because editable-scene code and older Maya
+    scenes already call it.  Its behavior now means "delete the whole managed
+    animation layer", including the legacy particle-based layer.
+    """
+    cmds = _maya_cmds()
+    for child in _direct_children(cmds, root):
+        if _is_animation_group(cmds, child):
+            _delete_group_and_managed_nodes(cmds, child)
+    # Expressions are DG nodes and may have survived after a root was deleted
+    # manually in an older scene.
+    _delete_orphan_wind_expressions(cmds)
+    _delete_orphan_falling_nodes(cmds)
+
+
+def _register_managed_nodes(cmds, group, nodes):
+    # Maya can invalidate a short DAG name after a poly operation creates or
+    # renames a sibling.  Resolve the group again before querying attributes;
+    # otherwise refresh ends with "no object named ..._WindAnimation" even
+    # though the animation itself was created and can play.
+    resolved_groups = cmds.ls(group, long=True) or []
+    if not resolved_groups:
         return
-    for frame, value in (
-        (config.start_frame - 1, 0.0),
-        (config.start_frame, rate),
-        (config.end_frame, rate),
-        (config.end_frame + 1, 0.0),
-    ):
-        cmds.setKeyframe(plug, time=frame, value=value)
+    group = resolved_groups[0]
+    if not cmds.attributeQuery("managedNodes", node=group, exists=True):
+        cmds.addAttr(
+            group,
+            longName="managedNodes",
+            attributeType="message",
+            multi=True,
+        )
+    slot = 0
+    for node in nodes:
+        if not node or not cmds.objExists(node):
+            continue
+        plug = group + ".managedNodes[{}]".format(slot)
+        try:
+            cmds.connectAttr(node + ".message", plug, force=True)
+            slot += 1
+        except RuntimeError:
+            pass
 
 
-def _create_wind(cmds, targets, plan, group, name):
-    if not targets or plan.config.wind_intensity <= 0.0:
+def _create_bend_layer(
+    cmds,
+    targets,
+    plan,
+    group,
+    name,
+    deformer_suffix,
+    expression_suffix,
+    amplitude,
+    frequency,
+):
+    if not targets or amplitude <= 0.0:
         return []
+
     deformer, handle = cmds.nonLinear(
         targets,
         type="bend",
-        name=name + "_WindBend",
+        name=name + deformer_suffix,
     )
+
     center = plan["center"]
-    minimum_y = plan["ground_y"]
     cmds.xform(
         handle,
         worldSpace=True,
-        translation=(center[0], minimum_y, center[2]),
+        translation=(center[0], plan["ground_y"], center[2]),
         rotation=(0.0, plan.config.wind_direction_degrees, 0.0),
     )
     _safe_set(cmds, handle + ".scaleY", max(plan["height"], 0.1))
     _safe_set(cmds, handle + ".visibility", False)
-    _safe_set(cmds, deformer + ".lowBound", 0.0)
-    _safe_set(cmds, deformer + ".highBound", 1.0)
+    _safe_set(cmds, deformer + ".lowBound", plan["wind_low_bound"])
+    _safe_set(cmds, deformer + ".highBound", plan["wind_high_bound"])
+    _safe_set(cmds, deformer + ".curvature", 0.0)
     cmds.parent(handle, group)
 
-    frequency = plan["wind_frequency"]
-    amplitude = plan["wind_curvature"]
-    expression_name = name + "_WindExpression"
-    # Delete any leftover expression node with the same name before
-    # creating a fresh one.  ``delete_weather_nodes`` may fail to remove
-    # the old expression (locked node, batch-delete aborted, etc.) and
-    # ``cmds.expression(name=...)`` on an existing node tries to UPDATE
-    # its body  -  which makes Maya re-parse the stale expression string
-    # that references the now-deleted bend deformer, raising the
-    # "parse error / 解析错误" users see on season switch.  Removing the
-    # old node first forces a clean create.
-    if cmds.objExists(expression_name):
-        try:
-            cmds.delete(expression_name)
-        except RuntimeError:
-            pass
+    phase = plan["wind_phase"]
+    signed_amplitude = amplitude * plan["wind_curvature_sign"]
+    expression_name = name + expression_suffix
     expression_body = (
-        "{0}.curvature = {1:.8f} * "
-        "(sin(frame * {2:.8f}) + 0.32 * sin(frame * {3:.8f} + 1.7));"
-    ).format(deformer, amplitude, frequency, frequency * 2.31)
-    try:
-        expression = cmds.expression(
-            name=expression_name,
-            alwaysEvaluate=True,
-            unitConversion="all",
-            string=expression_body,
-        )
-    except RuntimeError:
-        # Expression creation failed  -  the deformer will still bend
-        # the branches at its rest curvature (0.0), so the wind effect
-        # is simply static.  This is a cosmetic degradation, not a
-        # fatal error  -  the tree and foliage are already built.
-        return [deformer, handle]
+        "{0}.curvature = {1:.6f} * "
+        "sin(frame * {2:.6f} + {3:.6f});"
+    ).format(
+        deformer,
+        signed_amplitude,
+        frequency,
+        phase,
+    )
+    expression = cmds.expression(
+        name=expression_name,
+        alwaysEvaluate=True,
+        unitConversion="all",
+        string=expression_body,
+    )
     return [deformer, handle, expression]
 
 
-def _create_particle_system(cmds, name, render_type, lifespan, max_count=0):
+def _create_particle_system(cmds, name, lifespan, max_count):
     cmds.select(clear=True)
     created = list(cmds.particle(name=name))
     shape = next(
@@ -168,75 +284,70 @@ def _create_particle_system(cmds, name, render_type, lifespan, max_count=0):
     else:
         transform = created[0]
         shape = _shape(cmds, transform)
-    _safe_set(cmds, shape + ".particleRenderType", render_type)
+    _safe_set(cmds, shape + ".particleRenderType", 0)
     _safe_set(cmds, shape + ".lifespanMode", 1)
     _safe_set(cmds, shape + ".lifespan", lifespan)
-    if max_count > 0:
-        _safe_set(cmds, shape + ".maxCount", int(max_count))
+    _safe_set(cmds, shape + ".maxCount", int(max_count))
     return transform, shape
 
 
-def _emitter_positions(plan, grid_size=3):
-    center = plan["center"]
-    size = plan["size"]
-    height = plan["emitter_height"]
-    positions = []
-    for x_index in range(grid_size):
-        for z_index in range(grid_size):
-            x_amount = x_index / float(grid_size - 1) - 0.5
-            z_amount = z_index / float(grid_size - 1) - 0.5
-            positions.append(
-                (
-                    center[0] + x_amount * max(size[0] * 1.15, 4.0),
-                    height,
-                    center[2] + z_amount * max(size[2] * 1.15, 4.0),
-                )
-            )
-    return positions
+def _key_emitter_rate(cmds, emitter, rate, config):
+    """Key a low, evenly distributed emission rate across the timeline."""
+    plug = _shape(cmds, emitter) + ".rate"
+    if not cmds.objExists(plug):
+        return
+    for frame, value in (
+        (config.start_frame - 1, 0.0),
+        (config.start_frame, rate),
+        (config.end_frame, rate),
+        (config.end_frame + 1, 0.0),
+    ):
+        cmds.setKeyframe(plug, time=frame, value=value)
 
 
-def _create_directional_emitters(
+def _create_surface_emitters(
     cmds,
-    particle_transform,
-    plan,
+    meshes,
+    particles,
     group,
     name,
-    rate,
-    speed,
-    grid_size=3,
+    drop_count,
+    config,
 ):
+    valid_meshes = [
+        mesh for mesh in meshes
+        if mesh and cmds.objExists(mesh)
+    ]
+    if not valid_meshes or drop_count <= 0:
+        return []
     emitters = []
-    positions = _emitter_positions(plan, grid_size=grid_size)
-    direction_radians = math.radians(plan.config.wind_direction_degrees)
-    wind_drift = plan.config.wind_intensity * 0.12
-    for index, position in enumerate(positions):
-        cmds.select(clear=True)
-        emitter = cmds.emitter(
-            type="direction",
-            position=position,
-            rate=rate / float(len(positions)),
-            speed=speed,
-            directionX=math.cos(direction_radians) * wind_drift,
-            directionY=-1.0,
-            directionZ=math.sin(direction_radians) * wind_drift,
-            name="{}_{:02d}".format(name, index),
-        )[0]
-        cmds.connectDynamic(particle_transform, emitters=emitter)
-        _key_emitter_rate(
-            cmds,
-            emitter,
-            rate / float(len(positions)),
-            plan.config,
-        )
-        cmds.parent(emitter, group)
-        emitters.append(emitter)
+    duration_seconds = (
+        config.end_frame - config.start_frame + 1
+    ) / config.frames_per_second
+    rate = drop_count / max(duration_seconds, 0.001)
+    rate_per_mesh = rate / float(len(valid_meshes))
+    for index, mesh in enumerate(valid_meshes):
+        try:
+            emitter = cmds.emitter(
+                mesh,
+                type="surface",
+                rate=rate_per_mesh,
+                speed=0.15,
+                normalSpeed=0.12,
+                name="{}_{:02d}".format(name, index),
+            )[0]
+            cmds.connectDynamic(particles, emitters=emitter)
+            _key_emitter_rate(cmds, emitter, rate_per_mesh, config)
+            cmds.parent(emitter, group)
+            emitters.append(emitter)
+        except RuntimeError:
+            # One unsupported emitter mesh should not disable the other
+            # foliage meshes or the rest of the animation.
+            pass
     return emitters
 
 
 def _create_gravity(cmds, particle_transform, group, name, magnitude):
-    # Field commands inspect the active selection.  The last created emitter
-    # is otherwise still selected and Maya tries (invalidly) to make it own
-    # the gravity field.
     cmds.select(clear=True)
     field = cmds.gravity(
         name=name,
@@ -267,357 +378,191 @@ def _create_air(cmds, particle_transform, group, name, plan, magnitude):
     return field
 
 
-def _add_collision(cmds, target, particles, resilience, friction):
-    if not target or not cmds.objExists(target):
-        return []
-    try:
-        result = cmds.collision(
-            target,
-            particles,
-            resilience=resilience,
-            friction=friction,
-        )
-        if isinstance(result, (list, tuple)):
-            return list(result)
-        return [result] if result else []
-    except RuntimeError:
-        # Some Maya versions reject collisions on meshes with particular
-        # construction histories.  Weather generation should still succeed.
-        return []
+def _organ_rotation(source):
+    direction = source.direction
+    horizontal = math.sqrt(direction[0] ** 2 + direction[2] ** 2)
+    pitch = math.degrees(math.atan2(horizontal, max(direction[1], 0.001)))
+    yaw = math.degrees(math.atan2(direction[0], direction[2]))
+    return pitch, yaw, float(source.azimuth)
 
 
-def _create_rain(cmds, tree_result, plan, group, name):
-    if plan.config.rain_intensity <= 0.0:
-        return []
-    particles, shape = _create_particle_system(
-        cmds,
-        name + "_RainParticles",
-        render_type=2,
-        lifespan=max(2.0, plan["height"] / max(plan["rain_speed"], 0.1) * 2.0),
-    )
-    cmds.parent(particles, group)
-    _safe_set(cmds, shape + ".tailSize", 0.42)
-    _safe_set(cmds, shape + ".lineWidth", 1.15)
-    material, shading_group = _weather_material(
-        cmds,
-        name + "_Rain_MAT",
-        (0.28, 0.58, 0.92),
-        transparency=0.18,
-    )
-    cmds.sets(particles, edit=True, forceElement=shading_group)
-    emitters = _create_directional_emitters(
-        cmds,
-        particles,
-        plan,
-        group,
-        name + "_RainEmitter",
-        plan["rain_rate"],
-        plan["rain_speed"],
-    )
-    gravity = _create_gravity(cmds, particles, group, name + "_RainGravity", 4.5)
-    collisions = _add_collision(
-        cmds,
-        tree_result.get("mesh"),
-        particles,
-        resilience=0.12,
-        friction=0.20,
-    )
-    return [particles, shape, material, shading_group, gravity] + emitters + collisions
+def _set_keyed_value(cmds, node, attribute, start_frame, end_frame, start, end):
+    plug = node + "." + attribute
+    cmds.setAttr(plug, start)
+    cmds.setKeyframe(plug, time=start_frame, value=start)
+    cmds.setKeyframe(plug, time=end_frame, value=end)
 
 
-def _create_snow(cmds, tree_result, plan, group, name):
-    if plan.config.snow_intensity <= 0.0:
-        return []
-    particles, shape = _create_particle_system(
-        cmds,
-        name + "_SnowParticles",
-        render_type=6,
-        lifespan=max(6.0, plan["height"] / max(plan["snow_speed"], 0.1) * 1.8),
-    )
-    cmds.parent(particles, group)
-    _safe_set(cmds, shape + ".radius", max(0.025, plan["height"] * 0.0028))
-    material, shading_group = _weather_material(
-        cmds,
-        name + "_Snow_MAT",
-        (0.96, 0.98, 1.0),
-        transparency=0.02,
-    )
-    cmds.sets(particles, edit=True, forceElement=shading_group)
-    emitters = _create_directional_emitters(
-        cmds,
-        particles,
-        plan,
-        group,
-        name + "_SnowEmitter",
-        plan["snow_rate"],
-        plan["snow_speed"],
-    )
-    gravity = _create_gravity(cmds, particles, group, name + "_SnowGravity", 0.28)
-    air = _create_air(
-        cmds,
-        particles,
-        group,
-        name + "_SnowAir",
-        plan,
-        0.6 + 1.8 * plan.config.wind_intensity,
-    )
-    collisions = _add_collision(
-        cmds,
-        tree_result.get("mesh"),
-        particles,
-        resilience=0.02,
-        friction=0.78,
-    )
-    return [particles, shape, material, shading_group, gravity, air] + emitters + collisions
-
-
-def _create_snow_cover(cmds, tree_result, plan, group, name):
-    if plan.config.snow_intensity <= 0.0:
-        return []
-    snow_mesh = cmds.duplicate(
-        tree_result["mesh"],
-        returnRootsOnly=True,
-        name=name + "_SnowCover",
-    )[0]
-    cmds.parent(snow_mesh, group)
-    center = plan["center"]
-    cmds.xform(
-        snow_mesh,
-        worldSpace=True,
-        pivots=(center[0], plan["ground_y"], center[2]),
-    )
-    material, shading_group = _weather_material(
-        cmds,
-        name + "_SnowCover_MAT",
-        (0.94, 0.97, 1.0),
-        transparency=1.0,
-    )
-    cmds.sets(snow_mesh, edit=True, forceElement=shading_group)
-    start = plan.config.start_frame
-    accumulation_end = plan["snow_accumulation_end"]
-    end = plan.config.end_frame
-    amount = plan.config.snow_intensity
-    for axis, final_scale in (
-        ("X", 1.002 + 0.020 * amount),
-        ("Y", 1.001 + 0.010 * amount),
-        ("Z", 1.002 + 0.020 * amount),
-    ):
-        plug = snow_mesh + ".scale" + axis
-        cmds.setKeyframe(plug, time=start, value=1.0005)
-        cmds.setKeyframe(plug, time=accumulation_end, value=final_scale)
-        cmds.setKeyframe(plug, time=end, value=final_scale)
-    for channel in ("R", "G", "B"):
-        plug = material + ".transparency" + channel
-        cmds.setKeyframe(plug, time=start, value=1.0)
-        cmds.setKeyframe(
-            plug,
-            time=accumulation_end,
-            value=max(0.02, 0.36 - 0.32 * amount),
-        )
-        cmds.setKeyframe(
-            plug,
-            time=end,
-            value=max(0.02, 0.36 - 0.32 * amount),
-        )
-    return [snow_mesh, material, shading_group]
-
-
-def _create_surface_emitters(
-    cmds,
-    meshes,
-    particles,
-    group,
-    name,
-    total_rate,
-    config,
-):
-    valid_meshes = [mesh for mesh in meshes if mesh and cmds.objExists(mesh)]
-    if not valid_meshes:
-        return []
-    emitters = []
-    rate = total_rate / float(len(valid_meshes))
-    for index, mesh in enumerate(valid_meshes):
-        try:
-            emitter = cmds.emitter(
-                mesh,
-                type="surface",
-                rate=rate,
-                speed=0.15,
-                normalSpeed=0.12,
-                name="{}_{:02d}".format(name, index),
-            )[0]
-        except RuntimeError:
-            continue
-        cmds.connectDynamic(particles, emitters=emitter)
-        _key_emitter_rate(cmds, emitter, rate, config)
-        emitters.append(emitter)
-    return emitters
+def _set_keyed_curve(cmds, node, attribute, keys):
+    """Key a multi-point curve for a falling-organ transform channel."""
+    plug = node + "." + attribute
+    cmds.setAttr(plug, keys[0][1])
+    for frame, value in keys:
+        cmds.setKeyframe(plug, time=frame, value=value)
 
 
 def _create_falling_organs(
-    cmds,
-    foliage_result,
-    plan,
-    group,
-    name,
-    kind,
+    cmds, foliage_result, plan, group, name, kind, duration_override=None
 ):
     if not foliage_result:
         return []
     if kind == "leaf":
         count = plan["falling_leaf_count"]
-        rate = plan["leaf_fall_rate"]
         meshes = foliage_result.get("leaf_meshes", ())
-        max_count = plan.config.max_falling_leaves
+        sources = foliage_result["model"].leaves
     else:
         count = plan["falling_flower_count"]
-        rate = plan["flower_fall_rate"]
         meshes = foliage_result.get("flower_meshes", ())
-        max_count = plan.config.max_falling_flowers
-    if count <= 0 or not meshes:
+        sources = foliage_result["model"].flowers
+    if count <= 0 or not meshes or not sources:
         return []
 
     prototype, prototype_nodes = maya_foliage.create_organ_prototype_in_maya(
         foliage_result["model"],
         kind,
         group,
-        name + "_" + kind.title() + "Prototype",
+        name + "_Falling" + kind.title() + "Prototype",
     )
     if not prototype:
         return []
-    particles, shape = _create_particle_system(
-        cmds,
-        name + "_Falling" + kind.title() + "Particles",
-        render_type=0,
-        lifespan=max(5.0, plan["height"] / 2.2),
-        max_count=max_count,
-    )
-    cmds.parent(particles, group)
-    emitters = _create_surface_emitters(
-        cmds,
-        meshes,
-        particles,
-        group,
-        name + "_" + kind.title() + "SurfaceEmitter",
-        rate,
-        plan.config,
-    )
-    gravity = _create_gravity(
-        cmds,
-        particles,
-        group,
-        name + "_" + kind.title() + "Gravity",
-        1.4 if kind == "leaf" else 0.85,
-    )
-    air = _create_air(
-        cmds,
-        particles,
-        group,
-        name + "_" + kind.title() + "Air",
-        plan,
-        0.8 + 2.0 * plan.config.wind_intensity,
-    )
-    instancer = cmds.particleInstancer(
-        shape,
-        name=name + "_" + kind.title() + "Instancer",
-        addObject=True,
-        object=prototype,
-        cycle="None",
-        position="worldPosition",
-        particleAge="age",
-    )
-    if isinstance(instancer, (list, tuple)):
-        instancer_nodes = list(instancer)
-    else:
-        instancer_nodes = [instancer]
-    return (
-        [prototype, particles, shape, gravity, air]
-        + prototype_nodes
-        + emitters
-        + instancer_nodes
-    )
-
-
-def _register_managed_nodes(cmds, group, nodes):
-    if not cmds.attributeQuery("managedNodes", node=group, exists=True):
-        cmds.addAttr(
-            group,
-            longName="managedNodes",
-            attributeType="message",
-            multi=True,
+    managed = [prototype] + list(prototype_nodes)
+    span = max(2, plan.config.end_frame - plan.config.start_frame)
+    # The previous 16% span made a drop look like a snap.  A falling organ
+    # should remain visible for several seconds while drops are staggered.
+    if duration_override is None:
+        fall_duration = max(
+            84,
+            int(round(span * (0.72 if kind == "leaf" else 0.82))),
         )
-    connected = []
-    for node in nodes:
-        if not node or not cmds.objExists(node):
-            continue
-        if cmds.isConnected(node + ".message", group + ".managedNodes[{}]".format(len(connected))):
-            continue
-        try:
-            cmds.connectAttr(
-                node + ".message",
-                group + ".managedNodes[{}]".format(len(connected)),
-                force=True,
+    else:
+        fall_duration = max(12, int(duration_override))
+    first_start = plan.config.start_frame + 2
+    last_start = max(first_start, plan.config.end_frame - fall_duration - 1)
+    radians = math.radians(plan.config.wind_direction_degrees)
+    wind_x = math.cos(radians)
+    wind_z = math.sin(radians)
+    for index in range(count):
+        # Do not cycle through the source list in order.  A seeded integer
+        # mixer gives each drop a different canopy origin while preserving
+        # reproducibility when the same tree seed is used.
+        source_key = (
+            (index + 1) * 1103515245
+            + (plan.config.seed + 17) * 12345
+        ) & 0x7fffffff
+        source = sources[source_key % len(sources)]
+        if count == 1:
+            start_frame = (first_start + last_start) // 2
+        else:
+            start_frame = int(round(
+                first_start
+                + (last_start - first_start) * index / float(count - 1)
+            ))
+        end_frame = min(plan.config.end_frame, start_frame + fall_duration)
+        instance = cmds.instance(
+            prototype,
+            name="{}_Falling{}_{:04d}".format(name, kind.title(), index),
+        )[0]
+        resolved_group = cmds.ls(group, long=True) or []
+        if resolved_group:
+            cmds.parent(instance, resolved_group[0])
+        cmds.setAttr(instance + ".visibility", False)
+        cmds.setKeyframe(instance + ".visibility", time=start_frame - 1, value=0)
+        cmds.setKeyframe(instance + ".visibility", time=start_frame, value=1)
+        cmds.setKeyframe(instance + ".visibility", time=end_frame, value=1)
+        cmds.setKeyframe(instance + ".visibility", time=end_frame + 1, value=0)
+
+        direction_phase = (
+            index * 1.61803398875 + plan.config.seed * 0.73
+        ) * 0.017453292519943295
+        cross_x = -wind_z
+        cross_z = wind_x
+        # The source position is the actual attachment position on the tree.
+        # Do not add a launch offset here: the organ must visibly detach from
+        # a real leaf/flower location rather than appearing in mid-air.
+        start_pos = source.position
+        drift = plan["height"] * (0.38 + 0.12 * plan.config.wind_intensity)
+        lateral_spread = plan["height"] * (0.28 if kind == "leaf" else 0.22)
+        lateral = math.sin(direction_phase * 1.31) * lateral_spread
+        end_pos = (
+            start_pos[0] + wind_x * drift + cross_x * lateral,
+            plan["ground_y"] - max(0.5, plan["height"] * 0.08),
+            start_pos[2] + wind_z * drift + cross_z * lateral,
+        )
+        # Use several directional waypoints instead of one straight segment.
+        # The forward component follows the wind; the cross-wind component
+        # changes sign and magnitude so every organ describes a loose drift.
+        path_fractions = (0.0, 0.22, 0.48, 0.74, 1.0)
+        path_points = []
+        for fraction in path_fractions:
+            forward = drift * (fraction ** 1.08)
+            side_factor = (
+                0.48 * math.sin(math.pi * fraction)
+                * math.sin(direction_phase * 0.7)
+                + 0.52 * fraction
             )
-            connected.append(node)
-        except RuntimeError:
-            pass
+            wobble = (
+                plan["height"] * 0.055
+                * math.sin(math.pi * fraction)
+                * math.sin(direction_phase + fraction * math.pi * 2.4)
+                * (1.0 - fraction * 0.25)
+            )
+            path_points.append((
+                start_frame + int(round((end_frame - start_frame) * fraction)),
+                (
+                    start_pos[0] + wind_x * forward + cross_x * (lateral * side_factor) + cross_x * wobble,
+                    # Stronger ease-in keeps the organ floating near its
+                    # source for longer and removes the fast snap near the
+                    # beginning of the drop.
+                    start_pos[1] + (end_pos[1] - start_pos[1]) * (fraction ** 1.38),
+                    start_pos[2] + wind_z * forward + cross_z * (lateral * side_factor) + cross_z * wobble,
+                ),
+            ))
+        rotation = _organ_rotation(source)
+        tumble = 120.0 + (index % 5) * 55.0
+        _set_keyed_curve(
+            cmds, instance, "translateX",
+            tuple((frame, point[0]) for frame, point in path_points),
+        )
+        _set_keyed_curve(
+            cmds, instance, "translateY",
+            tuple((frame, point[1]) for frame, point in path_points),
+        )
+        _set_keyed_curve(
+            cmds, instance, "translateZ",
+            tuple((frame, point[2]) for frame, point in path_points),
+        )
+        _set_keyed_value(
+            cmds, instance, "rotateX", start_frame, end_frame,
+            rotation[0], rotation[0] + tumble,
+        )
+        _set_keyed_value(
+            cmds, instance, "rotateY", start_frame, end_frame,
+            rotation[1], rotation[1] + tumble * 0.7,
+        )
+        _set_keyed_value(
+            cmds, instance, "rotateZ", start_frame, end_frame,
+            rotation[2], rotation[2] + tumble * 0.45,
+        )
+        managed.append(instance)
+    return managed
 
 
-def delete_weather_nodes(root):
-    cmds = _maya_cmds()
-    groups = cmds.listRelatives(
-        root,
-        children=True,
-        type="transform",
-        fullPath=True,
-    ) or []
-    for group in groups:
-        if not cmds.attributeQuery("lsystemWeatherManaged", node=group, exists=True):
-            continue
-        nodes = []
-        if cmds.attributeQuery("managedNodes", node=group, exists=True):
-            nodes = cmds.listConnections(
-                group + ".managedNodes",
-                source=True,
-                destination=False,
-            ) or []
-        outside_group = [
-            node for node in set(nodes)
-            if cmds.objExists(node) and not str(node).startswith(str(group) + "|")
-        ]
-        # Per-node deletion (not batch).  ``cmds.delete(list)`` is not
-        # atomic  -  a single locked node aborts the whole call and the
-        # old ``except RuntimeError: pass`` swallowed the failure, leaving
-        # expression / deformer / particle nodes behind.  On the next
-        # season switch ``cmds.expression(name=...)` collided with the
-        # leftover expression node and Maya's expression parser raised
-        # "parse error" while trying to update the stale expression body
-        # (which referenced an already-deleted bend deformer).
-        for node in outside_group:
-            try:
-                if cmds.objExists(node):
-                    cmds.delete(node)
-            except RuntimeError:
-                pass
-        if cmds.objExists(group):
-            cmds.delete(group)
-    # Fallback: search for orphaned wind expression nodes by name
-    # pattern.  If ``_register_managed_nodes`` failed to connect the
-    # expression to the group (silent ``except RuntimeError: pass``),
-    # the expression survives the loop above and remains in the scene
-    # referencing a deleted deformer  -  Maya's expression parser
-    # raises "parse error / 解析错误" every time it evaluates.
-    #
-    # Search for ALL ``*_WindExpression`` nodes in the scene, not just
-    # the current tree name.  Orphaned expressions from a previous
-    # Maya session (where the tree root was deleted outside the tool)
-    # have a different tree name and would be missed by the targeted
-    # ``tree_name + "_WindExpression"`` lookup.
-    for expr in cmds.ls("*_WindExpression", type="expression") or []:
-        try:
-            cmds.delete(expr)
-        except RuntimeError:
-            pass
+def _create_wind(cmds, tree_targets, plan, group, name):
+    if not plan.config.has_wind():
+        return []
+
+    managed = _create_bend_layer(
+        cmds,
+        tree_targets,
+        plan,
+        group,
+        name,
+        "_WindBend",
+        EXPRESSION_SUFFIX,
+            plan["wind_amplitude_degrees"],
+            plan["wind_frequency"],
+    )
+    return managed
 
 
 def create_weather_in_maya(
@@ -626,44 +571,47 @@ def create_weather_in_maya(
     config=None,
     name="LSystemTree",
 ):
-    """Build Maya-native wind/rain/snow/snow-cover/falling-organ animation.
-
-    Parameters:
-        tree_result (dict): Output of ``create_tree_in_maya``  -  must
-            provide ``root``, ``mesh`` and ``model``.
-        foliage_result (dict|None): Output of ``create_foliage_in_maya``
-            for falling-leaf/falling-flower particle sources.  None
-            skips organ-fall animation.
-        config (WeatherConfig|None): Weather configuration.  Defaults to
-            ``WeatherConfig(seed=tree_model.config.seed + 211)``.
-        name (str): Maya node name prefix for the weather group and
-            child particle/emitter nodes.
-    """
+    """Create the wind-only animation layer for a generated tree."""
     cmds = _maya_cmds()
     tree_model = tree_result["model"]
     foliage_model = foliage_result.get("model") if foliage_result else None
     config = config or WeatherConfig(seed=tree_model.config.seed + 211)
     plan = build_weather_plan(tree_model, foliage_model, config)
     root = tree_result["root"]
+
+    # Always remove the previous layer first, including old particle-based
+    # weather nodes, so refreshing animation cannot stack deformers or
+    # duplicate falling-organ systems.
     delete_weather_nodes(root)
     if not config.any_effect_enabled():
-        return {"group": None, "plan": plan, "managed_nodes": []}
+        return {
+            "group": None,
+            "plan": plan,
+            "managed_nodes": [],
+            "animation_type": "none",
+        }
 
-    group = cmds.group(empty=True, name=name + "_Weather", parent=root)
-    cmds.addAttr(group, longName="lsystemWeatherManaged", attributeType="bool")
-    cmds.setAttr(group + ".lsystemWeatherManaged", True)
-    cmds.addAttr(group, longName="animationMode", dataType="string")
-    cmds.setAttr(
-        group + ".animationMode",
-        "Maya deformers and particles",
-        type="string",
+    group = cmds.group(
+        empty=True,
+        name=name + ANIMATION_GROUP_SUFFIX,
+        parent=root,
     )
-    cmds.addAttr(group, longName="implementationVersion", dataType="string")
-    cmds.setAttr(
-        group + ".implementationVersion",
-        "3.0-original-particles",
-        type="string",
+    _set_bool_attr(cmds, group, ANIMATION_MARKER, True)
+    # This marker keeps old cleanup code and old editable scenes compatible.
+    _set_bool_attr(cmds, group, LEGACY_WEATHER_MARKER, True)
+    animation_types = []
+    if config.has_wind():
+        animation_types.append("wind_sway")
+    if config.has_falling_organs():
+        animation_types.append("falling_organs")
+    _set_string_attr(cmds, group, "animationType", "+".join(animation_types))
+    _set_string_attr(
+        cmds,
+        group,
+        "animationMode",
+        "Maya bend deformer + keyed falling organ instances",
     )
+    _set_string_attr(cmds, group, "implementationVersion", "weather-keyed-fall-1.9")
     _set_string_attr(
         cmds,
         group,
@@ -671,19 +619,13 @@ def create_weather_in_maya(
         json.dumps(dict(config.__dict__), sort_keys=True),
     )
 
-    managed = [group]
-    managed.extend(
-        _create_wind(
-            cmds,
-            _mesh_targets(cmds, tree_result, foliage_result),
-            plan,
-            group,
-            name,
-        )
+    managed = _create_wind(
+        cmds,
+        _mesh_targets(cmds, tree_result, foliage_result),
+        plan,
+        group,
+        name,
     )
-    managed.extend(_create_rain(cmds, tree_result, plan, group, name))
-    managed.extend(_create_snow(cmds, tree_result, plan, group, name))
-    managed.extend(_create_snow_cover(cmds, tree_result, plan, group, name))
     managed.extend(
         _create_falling_organs(
             cmds,
@@ -704,9 +646,13 @@ def create_weather_in_maya(
             "flower",
         )
     )
-    _register_managed_nodes(cmds, group, managed[1:])
-
+    _register_managed_nodes(cmds, group, managed)
     cmds.playbackOptions(minTime=config.start_frame, maxTime=config.end_frame)
     cmds.currentTime(config.start_frame, edit=True)
     cmds.select(clear=True)
-    return {"group": group, "plan": plan, "managed_nodes": managed}
+    return {
+        "group": group,
+        "plan": plan,
+        "managed_nodes": [group] + managed,
+        "animation_type": "+".join(animation_types),
+    }

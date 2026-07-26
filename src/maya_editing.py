@@ -27,6 +27,10 @@ FOLIAGE_CONFIG_ATTR = "foliageConfigJson"
 WEATHER_CONFIG_ATTR = "weatherConfigJson"
 RADIAL_SIDES_ATTR = "radialSides"
 TIP_LOCATORS_ATTR = "createTipLocators"
+SEASONAL_CYCLE_MARKER = "lsystemSeasonalCycleManaged"
+SEASONAL_FALL_MARKER = "lsystemSeasonalFallManaged"
+SEASONAL_CYCLE_CONFIG_ATTR = "seasonalCycleConfigJson"
+SEASON_KEYS = ("spring", "summer", "autumn", "winter")
 
 
 def _config_payload(config):
@@ -219,6 +223,36 @@ def get_weather_config(root):
     return weather_config_from_json(text) if text else None
 
 
+def build_seasonal_schedule(start_frame=1, season_duration=240, transition_frames=60):
+    """Return a validated four-season frame schedule.
+
+    The schedule is pure Python so it can be tested without Maya.  Visibility
+    switches happen at each season boundary; the transition window is used by
+    the seasonal falling-organ layer.
+    """
+    start_frame = int(start_frame)
+    season_duration = int(season_duration)
+    transition_frames = int(transition_frames)
+    if season_duration < 24:
+        raise ValueError("season_duration must be at least 24 frames")
+    if transition_frames < 0 or transition_frames >= season_duration:
+        raise ValueError("transition_frames must be smaller than season_duration")
+    schedule = []
+    for index, season_key in enumerate(SEASON_KEYS):
+        season_start = start_frame + index * season_duration
+        schedule.append({
+            "season": season_key,
+            "start_frame": season_start,
+            "end_frame": season_start + season_duration - 1,
+            "transition_start": (
+                season_start if index == 0
+                else season_start - transition_frames
+            ),
+            "transition_end": season_start + transition_frames,
+        })
+    return tuple(schedule)
+
+
 def get_radial_sides(root, default=8):
     """Read the stored radial_sides attribute from ``root``.
 
@@ -388,6 +422,262 @@ def _managed_foliage_group(cmds, root):
     return None
 
 
+def _seasonal_cycle_groups(cmds, root, marker):
+    return _children_with_marker(cmds, root, marker)
+
+
+def delete_seasonal_cycle(root):
+    """Delete the generated four-season foliage and transition layer."""
+    cmds = _maya_cmds()
+    deleted = 0
+    for marker in (SEASONAL_FALL_MARKER, SEASONAL_CYCLE_MARKER):
+        for group in _seasonal_cycle_groups(cmds, root, marker):
+            if cmds.objExists(group):
+                try:
+                    cmds.delete(group)
+                    deleted += 1
+                except RuntimeError:
+                    pass
+    return deleted
+
+
+def _copy_season_foliage_config(base_config, season_key):
+    payload = dict(base_config.__dict__)
+    payload["season"] = season_key
+    return foliage.FoliageConfig(**payload)
+
+
+def _copy_cycle_weather_config(base_config, start_frame, end_frame, seed,
+                               leaf_fall_intensity=0.0,
+                               flower_fall_intensity=0.0):
+    return weather.WeatherConfig(
+        wind_intensity=base_config.wind_intensity,
+        wind_direction_degrees=base_config.wind_direction_degrees,
+        start_frame=start_frame,
+        end_frame=end_frame,
+        seed=seed,
+        frames_per_second=base_config.frames_per_second,
+        rain_intensity=0.0,
+        snow_intensity=0.0,
+        leaf_fall_intensity=leaf_fall_intensity,
+        flower_fall_intensity=flower_fall_intensity,
+        max_falling_leaves=base_config.max_falling_leaves,
+        max_falling_flowers=base_config.max_falling_flowers,
+    )
+
+
+def _key_season_visibility(cmds, group, schedule, index):
+    start_frame = schedule[index]["start_frame"]
+    end_frame = schedule[index]["end_frame"]
+    cmds.setAttr(group + ".visibility", False)
+    cmds.setKeyframe(group + ".visibility", time=start_frame - 1, value=0)
+    cmds.setKeyframe(group + ".visibility", time=start_frame, value=1)
+    cmds.setKeyframe(group + ".visibility", time=end_frame, value=1)
+    if index < len(schedule) - 1:
+        next_start = schedule[index + 1]["start_frame"]
+        cmds.setKeyframe(group + ".visibility", time=next_start - 1, value=1)
+        cmds.setKeyframe(group + ".visibility", time=next_start, value=0)
+    else:
+        cmds.setKeyframe(group + ".visibility", time=end_frame + 1, value=0)
+
+
+def _create_seasonal_fall_layer(
+    root,
+    cycle_group,
+    tree_result,
+    season_results,
+    schedule,
+    weather_config,
+    transition_frames,
+    name,
+):
+    cmds = _maya_cmds()
+    fall_group = cmds.group(
+        empty=True,
+        name=name + "_SeasonalFalling",
+        parent=cycle_group,
+    )
+    mark_transform(cmds, fall_group, SEASONAL_FALL_MARKER)
+    managed = []
+    # Falling organs are emitted from the outgoing season at each boundary.
+    # The winter->spring transition is left to the next cycle so the final
+    # frame does not abruptly create objects outside the playback range.
+    fall_multipliers = (
+        (0.20, 1.00),  # spring -> summer: flowers mostly drop
+        (0.18, 0.35),  # summer -> autumn: a few remaining flowers/leaves
+        (1.00, 0.0),   # autumn -> winter: leaves drop
+    )
+    for index in range(3):
+        season_result = season_results[index]
+        season_info = schedule[index]
+        transition_end = season_info["end_frame"]
+        transition_start = max(
+            season_info["start_frame"],
+            transition_end - transition_frames + 1,
+        )
+        leaf_intensity = weather_config.leaf_fall_intensity * fall_multipliers[index][0]
+        flower_intensity = weather_config.flower_fall_intensity * fall_multipliers[index][1]
+        if leaf_intensity <= 0.0 and flower_intensity <= 0.0:
+            continue
+        transition_config = _copy_cycle_weather_config(
+            weather_config,
+            transition_start,
+            transition_end,
+            weather_config.seed + 31 * (index + 1),
+            leaf_fall_intensity=leaf_intensity,
+            flower_fall_intensity=flower_intensity,
+        )
+        plan = weather.build_weather_plan(
+            tree_result["model"],
+            season_result["model"],
+            transition_config,
+        )
+        managed.extend(maya_weather._create_falling_organs(
+            cmds,
+            season_result,
+            plan,
+            fall_group,
+            name + "_" + season_info["season"],
+            "leaf",
+            duration_override=transition_frames,
+        ))
+        managed.extend(maya_weather._create_falling_organs(
+            cmds,
+            season_result,
+            plan,
+            fall_group,
+            name + "_" + season_info["season"],
+            "flower",
+            duration_override=transition_frames,
+        ))
+    maya_weather._register_managed_nodes(cmds, fall_group, managed)
+    return fall_group, managed
+
+
+def create_seasonal_cycle_in_maya(
+    root,
+    foliage_config,
+    weather_config,
+    start_frame=1,
+    season_duration=240,
+    transition_frames=60,
+):
+    """Build a spring-to-winter animation without replacing the tree trunk.
+
+    Four foliage groups are generated under one managed cycle group.  Their
+    visibility is keyed over the schedule, while one shared wind layer bends
+    the branch mesh and every seasonal foliage mesh.  Seasonal falling organs
+    are generated only during the first three season boundaries.
+    """
+    cmds = _maya_cmds()
+    schedule = build_seasonal_schedule(
+        start_frame, season_duration, transition_frames,
+    )
+    tree_result = _tree_result_from_root(root)
+    root_name = root.split("|")[-1]
+
+    # Remove both the old single-season layer and any previous cycle before
+    # creating a fresh, self-contained cycle.
+    maya_weather.delete_weather_nodes(root)
+    delete_seasonal_cycle(root)
+    delete_foliage_nodes(root)
+
+    cycle_group = cmds.group(
+        empty=True,
+        name=root_name + "_SeasonalCycle",
+        parent=root,
+    )
+    mark_transform(cmds, cycle_group, SEASONAL_CYCLE_MARKER)
+    _set_string_attr(
+        cmds,
+        cycle_group,
+        SEASONAL_CYCLE_CONFIG_ATTR,
+        json.dumps({
+            "start_frame": int(start_frame),
+            "season_duration": int(season_duration),
+            "transition_frames": int(transition_frames),
+            "seasons": list(SEASON_KEYS),
+        }, sort_keys=True),
+    )
+
+    season_results = []
+    all_meshes = []
+    all_leaf_meshes = []
+    all_flower_meshes = []
+    all_twig_meshes = []
+    for index, season_key in enumerate(SEASON_KEYS):
+        season_config = _copy_season_foliage_config(
+            foliage_config, season_key,
+        )
+        season_result = maya_foliage.create_foliage_in_maya(
+            tree_model=tree_result["model"],
+            config=season_config,
+            parent_root=cycle_group,
+            name=root_name + "_" + season_key.title(),
+        )
+        season_results.append(season_result)
+        all_meshes.extend(season_result.get("meshes", ()))
+        all_leaf_meshes.extend(season_result.get("leaf_meshes", ()))
+        all_flower_meshes.extend(season_result.get("flower_meshes", ()))
+        all_twig_meshes.extend(season_result.get("twig_meshes", ()))
+        _key_season_visibility(
+            cmds,
+            season_result["group"],
+            schedule,
+            index,
+        )
+
+    combined_foliage = {
+        "meshes": all_meshes,
+        "leaf_meshes": all_leaf_meshes,
+        "flower_meshes": all_flower_meshes,
+        "twig_meshes": all_twig_meshes,
+        "model": season_results[0]["model"],
+    }
+    cycle_start = schedule[0]["start_frame"]
+    cycle_end = schedule[-1]["end_frame"]
+    cycle_weather = _copy_cycle_weather_config(
+        weather_config,
+        cycle_start,
+        cycle_end,
+        weather_config.seed,
+        leaf_fall_intensity=0.0,
+        flower_fall_intensity=0.0,
+    )
+    wind_result = maya_weather.create_weather_in_maya(
+        tree_result=tree_result,
+        foliage_result=combined_foliage,
+        config=cycle_weather,
+        name=root_name,
+    )
+    fall_group, fall_nodes = _create_seasonal_fall_layer(
+        root,
+        cycle_group,
+        tree_result,
+        season_results,
+        schedule,
+        weather_config,
+        transition_frames,
+        root_name,
+    )
+    store_foliage_settings(root, foliage_config)
+    store_weather_settings(root, cycle_weather)
+    cmds.playbackOptions(minTime=cycle_start, maxTime=cycle_end)
+    cmds.currentTime(cycle_start, edit=True)
+    cmds.select(root, replace=True)
+    return {
+        "cycle_group": cycle_group,
+        "fall_group": fall_group,
+        "season_groups": [result["group"] for result in season_results],
+        "season_results": season_results,
+        "schedule": schedule,
+        "weather_result": wind_result,
+        "fall_nodes": fall_nodes,
+        "cycle_start": cycle_start,
+        "cycle_end": cycle_end,
+    }
+
+
 def _foliage_meshes(cmds, group):
     if not group or not cmds.objExists(group):
         return [], []
@@ -405,9 +695,25 @@ def _foliage_meshes(cmds, group):
     flower_meshes = [
         node
         for node in descendants
-        if "_Flowers_" in node and cmds.listRelatives(node, shapes=True)
+        if (
+            (
+                "_Flowers_" in node
+                or "_FlowerCenters" in node
+                # Woody flowers are Maya instances named like
+                # ``*_FlowerProto_*_Inst_0001`` rather than the legacy
+                # merged ``*_Flowers_00`` meshes.  They must also be
+                # supplied to the wind deformer after a refresh.
+                or ("_FlowerProto_" in node and "_Inst_" in node)
+            )
+            and cmds.listRelatives(node, shapes=True)
+        )
     ]
-    return leaf_meshes, flower_meshes
+    twig_meshes = [
+        node
+        for node in descendants
+        if "_Twigs" in node and cmds.listRelatives(node, shapes=True)
+    ]
+    return leaf_meshes, flower_meshes, twig_meshes
 
 
 def _tree_result_from_root(root, tree_config=None):
@@ -431,12 +737,13 @@ def _foliage_result_from_root(root, tree_model):
     if not config or not group:
         return None
     model = foliage.generate_foliage(tree_model, config)
-    leaf_meshes, flower_meshes = _foliage_meshes(cmds, group)
+    leaf_meshes, flower_meshes, twig_meshes = _foliage_meshes(cmds, group)
     return {
         "group": group,
-        "meshes": leaf_meshes + flower_meshes,
+        "meshes": leaf_meshes + flower_meshes + twig_meshes,
         "leaf_meshes": leaf_meshes,
         "flower_meshes": flower_meshes,
+        "twig_meshes": twig_meshes,
         "flower_center_mesh": None,
         "model": model,
     }
@@ -458,6 +765,7 @@ def regenerate_branches(root, tree_config, radial_sides=None, create_tip_locator
     if create_tip_locators is None:
         create_tip_locators = get_tip_locator_flag(root)
     root_name = root.split("|")[-1]
+    delete_seasonal_cycle(root)
     _delete_children_with_marker(cmds, root, BRANCH_MARKER)
     _delete_children_with_marker(cmds, root, TIP_MARKER)
     delete_foliage_nodes(root)
@@ -493,6 +801,7 @@ def refresh_foliage(root, foliage_config):
     """
     tree_result = _tree_result_from_root(root)
     maya_weather.delete_weather_nodes(root)
+    delete_seasonal_cycle(root)
     delete_foliage_nodes(root)
     result = maya_foliage.create_foliage_in_maya(
         tree_model=tree_result["model"],
@@ -560,6 +869,7 @@ _ORPHAN_SHADING_PATTERNS = (
 
 _ORPHAN_EXPRESSION_PATTERNS = (
     "*_WindExpression",
+    "*_OrganFlutterExpression",
 )
 
 

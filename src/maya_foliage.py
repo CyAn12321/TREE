@@ -1747,6 +1747,26 @@ def _set_string_attr(cmds, node, attr, value):
     cmds.setAttr(node + "." + attr, value, type="string")
 
 
+def _parent_if_exists(cmds, node, parent):
+    """Parent a generated prototype using Maya's resolved DAG path.
+
+    Maya may return a short name for a managed animation group while a
+    preceding poly operation has changed the active DAG path.  Resolving the
+    long path avoids aborting falling-organ creation on a harmless rename.
+    """
+    if not node or not parent:
+        return
+    resolved = cmds.ls(parent, long=True) or []
+    if not resolved:
+        return
+    try:
+        cmds.parent(node, resolved[0])
+    except RuntimeError:
+        # The prototype can remain at world level and still be used by the
+        # particle instancer; cleanup will remove it through managedNodes.
+        pass
+
+
 def _create_mesh(cmds, om, arrays, name, parent, shading_group, smooth_level=0,
                  generate_uvs=False, depth_bias=-0.5):
     """Create a Maya mesh from raw point/count/connect arrays.
@@ -1864,13 +1884,14 @@ def _create_mesh(cmds, om, arrays, name, parent, shading_group, smooth_level=0,
     #     against branch geometry at the same depth.  ``depth_bias``
     #     lets the caller push flowers further forward than leaves so
     #     blossoms are never occluded by nearby leaves.
-    #   - oppositeZ: renders back faces with reversed depth so internal
-    #     faces don't fight front faces.
+    #   - Keep oppositeZ disabled.  On thin, double-sided foliage Maya can
+    #     alternate the back-face depth while a bend deformer is moving the
+    #     mesh, which appears as viewport flicker.
     if cmds.attributeQuery("polygonOffset", node=shape, exists=True):
         # Negative bias = closer to camera = renders in front.
         cmds.setAttr(shape + ".polygonOffset", depth_bias)
     if cmds.attributeQuery("oppositeZ", node=shape, exists=True):
-        cmds.setAttr(shape + ".oppositeZ", True)
+        cmds.setAttr(shape + ".oppositeZ", False)
     # Smooth and unify face normals so every triangle is lit consistently.
     # Without this, inverted-winding faces appear dark even with
     # doubleSided enabled, producing fake "shadow" patches.
@@ -1905,11 +1926,11 @@ def _dominant_color_index(instances):
 
 
 def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
-    """Create one seasonal organ using the same geometry as attached organs.
+    """Create one falling-organ prototype matching attached foliage.
 
     Parameters:
-        foliage_model (FoliageModel): Provides palette, average sizes and
-            species info used to build a representative prototype.
+        foliage_model (FoliageModel): Provides the generated organ instances,
+            season profile and species info used to build the prototype.
         kind (str): "leaf" or "flower"  -  selects which organ to build.
         parent (str): Maya parent transform for the prototype node.
         name (str): Maya node name for the prototype transform.
@@ -1927,32 +1948,53 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
     if kind == "leaf":
         if not foliage_model.leaves:
             return None, []
-        color_index = _dominant_color_index(foliage_model.leaves)
-        average_length = sum(leaf.length for leaf in foliage_model.leaves) / len(
-            foliage_model.leaves
+        woody_species = getattr(
+            getattr(foliage_model, "config", None), "woody_species", None
         )
-        average_width = sum(leaf.width for leaf in foliage_model.leaves) / len(
-            foliage_model.leaves
-        )
+        # Use a real generated leaf instance rather than an unrelated
+        # average-sized fallback.  Its petiole, curl, fold and species
+        # parameters are therefore identical to the attached foliage.
+        source_leaf = foliage_model.leaves[0]
         prototype_leaf = LeafInstance(
             position=(0.0, 0.0, 0.0),
             direction=(0.0, 1.0, 0.0),
             azimuth=0.0,
-            length=average_length,
-            width=average_width,
-            color_index=color_index,
+            length=source_leaf.length,
+            width=source_leaf.width,
+            color_index=source_leaf.color_index,
             source_segment=-1,
+            petiole_length=source_leaf.petiole_length,
+            species=source_leaf.species,
+            droop_factor=source_leaf.droop_factor,
+            blade_curve=source_leaf.blade_curve,
+            curl_variation=source_leaf.curl_variation,
+            tip_fold=source_leaf.tip_fold,
+            has_damage=source_leaf.has_damage,
         )
         prototype_model = _PrototypeFoliageModel(
             profile,
             leaves=[prototype_leaf],
         )
-        material_name = name + "_MAT"
-        shading_group = _material(
-            cmds,
-            material_name,
-            profile.leaf_palette[color_index],
+        season_key = profile.key
+        color_index = source_leaf.color_index
+        material_name = "LSystemLeaf_{}_{:02d}_MAT".format(
+            season_key, color_index,
         )
+        if woody_species:
+            shading_group = _material_with_veins(
+                cmds,
+                material_name,
+                profile.leaf_palette[color_index],
+                kind="leaf",
+                species=woody_species,
+                two_sided=False,
+            )
+        else:
+            shading_group = _material(
+                cmds,
+                material_name,
+                profile.leaf_palette[color_index],
+            )
         arrays = build_leaf_mesh_groups(prototype_model)[color_index]
         prototype = _create_mesh(
             cmds,
@@ -1961,25 +2003,39 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
             name,
             parent,
             shading_group,
+            smooth_level=0,
+            generate_uvs=bool(woody_species),
         )
         cmds.setAttr(prototype + ".visibility", False)
-        return prototype, [material_name, shading_group]
+        # The material belongs to the attached foliage as well; do not
+        # register it for deletion with the falling-particle nodes.
+        return prototype, []
 
     if kind != "flower" or not foliage_model.flowers:
         return None, []
     color_index = _dominant_color_index(foliage_model.flowers)
-    average_size = sum(flower.size for flower in foliage_model.flowers) / len(
-        foliage_model.flowers
+    source_flower = next(
+        flower for flower in foliage_model.flowers
+        if flower.color_index == color_index
+    )
+    source_state = _flower_instance_state(source_flower)
+    matching_flowers = [
+        flower for flower in foliage_model.flowers
+        if flower.color_index == color_index
+        and _flower_instance_state(flower) == source_state
+    ]
+    average_size = sum(flower.size for flower in matching_flowers) / len(
+        matching_flowers
     )
     average_openness = sum(
-        flower.openness for flower in foliage_model.flowers
-    ) / len(foliage_model.flowers)
-    average_wilt = sum(flower.wilt for flower in foliage_model.flowers) / len(
-        foliage_model.flowers
+        flower.openness for flower in matching_flowers
+    ) / len(matching_flowers)
+    average_wilt = sum(flower.wilt for flower in matching_flowers) / len(
+        matching_flowers
     )
     average_peduncle = sum(
-        flower.peduncle_length for flower in foliage_model.flowers
-    ) / len(foliage_model.flowers)
+        flower.peduncle_length for flower in matching_flowers
+    ) / len(matching_flowers)
     # Read woody_species from the foliage config so the prototype
     # emits species-accurate geometry (cherry V-notch, stamen count,
     # pedicel ratio, etc.).  Without this, build_flower_mesh_groups
@@ -1998,16 +2054,31 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
         wilt=average_wilt,
         source_tip=-1,
         peduncle_length=average_peduncle,
-        species=woody_species,
+        species=source_flower.species or woody_species,
     )
     prototype_model = _PrototypeFoliageModel(
         profile,
         flowers=[prototype_flower],
     )
     petal_groups, center_arrays, sepal_arrays = build_flower_mesh_groups(prototype_model)
-    petal_material_name = name + "_Petal_MAT"
-    center_material_name = name + "_Center_MAT"
-    sepal_material_name = name + "_Sepal_MAT"
+    season_key = profile.key
+    tree_name = name.split("_FallingFlowerPrototype")[0]
+    if woody_species:
+        # Reuse the same state/color materials as the attached woody flower
+        # prototypes.  This keeps veins, translucency and species colors
+        # identical without creating a second look for falling flowers.
+        proto_base = "{}_{}_FlowerProto_{}_{:02d}".format(
+            tree_name, season_key, source_state, color_index,
+        )
+        petal_material_name = proto_base + "_Petal_MAT"
+        center_material_name = proto_base + "_Center_MAT"
+        sepal_material_name = proto_base + "_Sepal_MAT"
+    else:
+        petal_material_name = "LSystemFlower_{}_{:02d}_MAT".format(
+            season_key, color_index,
+        )
+        center_material_name = "LSystemFlowerCenter_{}_MAT".format(season_key)
+        sepal_material_name = name + "_Sepal_MAT"
     # Woody species get vein-bump materials + OpenSubdiv smoothing so
     # the prototype renders with the same quality as attached organs.
     # Non-woody prototypes keep plain lambert so the weather particle
@@ -2042,7 +2113,7 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
             sepal_material_name,
             sepal_color_val,
         )
-        smooth = 2
+        smooth = 1
     else:
         petal_sg = _material(
             cmds,
@@ -2064,6 +2135,8 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
         parent,
         petal_sg,
         smooth_level=smooth,
+        generate_uvs=bool(woody_species),
+        depth_bias=-1.0,
     )
     center_mesh = _create_mesh(
         cmds,
@@ -2073,6 +2146,7 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
         parent,
         center_sg,
         smooth_level=smooth,
+        depth_bias=-1.0,
     )
     # Sepal mesh: only created when the sepal array has geometry (woody
     # path).  Skipping an empty array avoids Maya creating a degenerate
@@ -2087,6 +2161,7 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
             parent,
             sepal_sg,
             smooth_level=smooth,
+            depth_bias=-1.0,
         )
     # polyUnite with explicit if/else instead of *args unpacking  - 
     # *unpacking in function calls is Python 3.5+ only, but Maya
@@ -2102,17 +2177,11 @@ def create_organ_prototype_in_maya(foliage_model, kind, parent, name):
             petal_mesh, center_mesh,
             constructionHistory=False, name=name,
         )[0]
-    cmds.parent(prototype, parent)
+    _parent_if_exists(cmds, prototype, parent)
     cmds.setAttr(prototype + ".visibility", False)
-    material_list = [
-        petal_material_name,
-        petal_sg,
-        center_material_name,
-        center_sg,
-    ]
-    if sepal_sg is not None:
-        material_list.extend([sepal_material_name, sepal_sg])
-    return prototype, material_list
+    # These materials are shared with the attached tree foliage.  Keep them
+    # alive when the falling particle system is removed.
+    return prototype, []
 
 
 def _flower_instance_state(flower):
@@ -2283,7 +2352,7 @@ def _build_flower_instances(cmds, om, model, parent, name):
                 petal_mesh, center_mesh,
                 constructionHistory=False, name=proto_base,
             )[0]
-        cmds.parent(prototype, parent)
+        _parent_if_exists(cmds, prototype, parent)
         # polyUnite creates a fresh shape that does NOT inherit the
         # per-shape polygonOffset set on the petal/center/sepal sub-
         # meshes above.  Re-apply the flower depth bias on the united

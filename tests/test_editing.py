@@ -16,6 +16,27 @@ from src.weather import WeatherConfig
 
 
 class EditableTreeConfigTests(unittest.TestCase):
+    def test_seasonal_schedule_covers_four_seasons(self):
+        schedule = maya_editing.build_seasonal_schedule(
+            start_frame=10,
+            season_duration=120,
+            transition_frames=24,
+        )
+        self.assertEqual(
+            [item["season"] for item in schedule],
+            ["spring", "summer", "autumn", "winter"],
+        )
+        self.assertEqual(schedule[0]["start_frame"], 10)
+        self.assertEqual(schedule[-1]["end_frame"], 489)
+        self.assertEqual(schedule[1]["transition_start"], 106)
+
+    def test_seasonal_schedule_rejects_invalid_transition(self):
+        with self.assertRaises(ValueError):
+            maya_editing.build_seasonal_schedule(
+                season_duration=60,
+                transition_frames=60,
+            )
+
     def test_tree_config_round_trips_through_scene_json(self):
         config = TreeConfig.from_preset(
             "willow_weeping",
